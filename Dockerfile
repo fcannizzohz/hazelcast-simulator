@@ -63,6 +63,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       openjdk-21-jre-headless \
       python3.11 \
+      maven \
       terraform \
       rsync git ssh \
  && rm -rf /var/lib/apt/lists/*
