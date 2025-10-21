@@ -1,3 +1,5 @@
+This fork is now deprecated since the [official Hazelcast simulator](https://github.com/hazelcast/hazelcast-simulator) now has the ability to run the tool via Docker.
+
 # Hazelcast Simulator
 
 Hazelcast Simulator is a production simulator used to test Hazelcast and Hazelcast-based applications in clustered
