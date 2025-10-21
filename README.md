@@ -1,4 +1,4 @@
-This fork is now deprecated since the [official Hazelcast simulator](https://github.com/hazelcast/hazelcast-simulator) now has the ability to run the tool via Docker.
+**This fork is now deprecated since the [official Hazelcast simulator](https://github.com/hazelcast/hazelcast-simulator) now has the ability to run the tool via Docker.**
 
 # Hazelcast Simulator
 
