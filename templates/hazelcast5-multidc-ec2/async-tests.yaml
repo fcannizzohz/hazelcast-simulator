@@ -1,0 +1,14 @@
+- name: map-benchmark
+  test:
+    class: map.MapTest
+  client:
+    args:
+      threadCount: 20
+      keyCount: 1000000
+      operationCount: 1000000
+      valueCount: 1000
+      valueLength: 1000
+      putProb: 0
+      getProb: 100
+      removeProb: 0
+      maxExecutionTime: 1m
