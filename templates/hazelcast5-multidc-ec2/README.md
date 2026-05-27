@@ -2,12 +2,13 @@ This template is an additive scaffold for managed multi-DC AWS deployments.
 
 The first managed implementation now supports:
 - multiple DC entries in one AWS region
+- bounded cross-region support for up to two AWS regions
 - one subnet per DC
-- same VPC / same Internet Gateway across all DCs
+- one shared VPC and Internet Gateway per region
 - public IPs for operator access
 - private IPs for Hazelcast, load generator, and MC-to-cluster traffic
 
-It does not yet support cross-region provisioning.
+When two regions are used, private cross-region traffic is carried over VPC peering.
 
 Create a project:
 
@@ -28,9 +29,8 @@ cat inventory.yaml
 ```
 
 For the first managed cut, all `dcs` entries must:
-- use the same AWS region
-- use the same `vpc_id`
-- use the same `internet_gateway_id`
+- use at most two AWS regions
+- share one `vpc_id` and one `internet_gateway_id` per region
 - use different `availability_zone` and `cidr_block` values
 
 Backward compatibility notes:

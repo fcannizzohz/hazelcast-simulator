@@ -41,7 +41,7 @@ dcs:
     - name: dc-a
       region: eu-west-2
       availability_zone: eu-west-2a
-      # In the first managed implementation all DCs must share the same VPC and IGW.
+      # All DCs in the same region must share the same VPC and IGW.
       vpc_id: vpc-aaaaaaaaaaaaaaaaa
       internet_gateway_id: igw-aaaaaaaaaaaaaaaaa
       cidr_block: 172.31.88.0/24
@@ -53,7 +53,7 @@ dcs:
     - name: dc-b
       region: eu-west-2
       availability_zone: eu-west-2b
-      # Same-region, same-VPC, different-AZ layout for the initial managed implementation.
+      # For cross-region tests, use a different region and a different VPC/IGW for that region.
       vpc_id: vpc-aaaaaaaaaaaaaaaaa
       internet_gateway_id: igw-aaaaaaaaaaaaaaaaa
       cidr_block: 172.31.89.0/24
