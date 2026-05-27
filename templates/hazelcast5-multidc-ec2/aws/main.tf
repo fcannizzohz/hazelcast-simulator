@@ -617,7 +617,7 @@ resource "aws_security_group" "secondary_mc_sg" {
 resource "aws_instance" "primary_nodes" {
   for_each               = { for item in local.primary_node_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
-  ami                    = local.settings.nodes.ami
+  ami                    = try(each.value.dc.nodes.ami, local.settings.nodes.ami)
   instance_type          = local.settings.nodes.instance_type
   availability_zone      = each.value.dc.availability_zone
   subnet_id              = aws_subnet.primary_dc_subnet[each.value.dc.name].id
@@ -638,7 +638,7 @@ resource "aws_instance" "secondary_nodes" {
   provider               = aws.secondary
   for_each               = { for item in local.secondary_node_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
-  ami                    = local.settings.nodes.ami
+  ami                    = try(each.value.dc.nodes.ami, local.settings.nodes.ami)
   instance_type          = local.settings.nodes.instance_type
   availability_zone      = each.value.dc.availability_zone
   subnet_id              = aws_subnet.secondary_dc_subnet[each.value.dc.name].id
@@ -658,7 +658,7 @@ resource "aws_instance" "secondary_nodes" {
 resource "aws_instance" "primary_loadgenerators" {
   for_each               = { for item in local.primary_loadgenerator_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
-  ami                    = local.settings.loadgenerators.ami
+  ami                    = try(each.value.dc.loadgenerators.ami, local.settings.loadgenerators.ami)
   instance_type          = local.settings.loadgenerators.instance_type
   availability_zone      = each.value.dc.availability_zone
   subnet_id              = aws_subnet.primary_dc_subnet[each.value.dc.name].id
@@ -679,7 +679,7 @@ resource "aws_instance" "secondary_loadgenerators" {
   provider               = aws.secondary
   for_each               = { for item in local.secondary_loadgenerator_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
-  ami                    = local.settings.loadgenerators.ami
+  ami                    = try(each.value.dc.loadgenerators.ami, local.settings.loadgenerators.ami)
   instance_type          = local.settings.loadgenerators.instance_type
   availability_zone      = each.value.dc.availability_zone
   subnet_id              = aws_subnet.secondary_dc_subnet[each.value.dc.name].id
@@ -699,7 +699,7 @@ resource "aws_instance" "secondary_loadgenerators" {
 resource "aws_instance" "primary_mc" {
   for_each               = { for item in local.primary_mc_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
-  ami                    = local.settings.mc.ami
+  ami                    = try(each.value.dc.mc.ami, local.settings.mc.ami)
   instance_type          = local.settings.mc.instance_type
   availability_zone      = each.value.dc.availability_zone
   subnet_id              = aws_subnet.primary_dc_subnet[each.value.dc.name].id
@@ -738,7 +738,7 @@ resource "aws_instance" "secondary_mc" {
   provider               = aws.secondary
   for_each               = { for item in local.secondary_mc_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
-  ami                    = local.settings.mc.ami
+  ami                    = try(each.value.dc.mc.ami, local.settings.mc.ami)
   instance_type          = local.settings.mc.instance_type
   availability_zone      = each.value.dc.availability_zone
   subnet_id              = aws_subnet.secondary_dc_subnet[each.value.dc.name].id
