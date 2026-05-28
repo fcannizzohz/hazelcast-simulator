@@ -128,21 +128,12 @@ def __ensure_plan_exists(terraform_plan):
         exit_with_error(f"Directory [{terraform_plan}] does not exist.")
 
 
-def extract_aws_region_from_arn(arn):
-    # ARN format: arn:partition:service:region:account-id:resource
-    match = re.match(r'arn:[^:]+:[^:]+:([^:]+):', arn)
-    if match:
-        return match.group(1)
-    return "default_region"
-
-
-def extract_aws_region_from_arn(arn):
+def extract_nlb_region_from_arn(arn):
     # ARN format: arn:aws:elasticloadbalancing:<region>:<account-id>:loadbalancer/<lb-name>/<lb-id>
     match = re.match(r'arn:aws:elasticloadbalancing:([^:]+):', arn)
     if match:
         return match.group(1)
-    else:
-        return None
+    return None
 
 
 def extract_lb_name_from_arn(arn):
@@ -158,7 +149,7 @@ def extract_lb_name_from_arn(arn):
 def __get_nlb_private_ip(data):
     import boto3
 
-    aws_region = extract_aws_region_from_arn(data['arn'])
+    aws_region = extract_nlb_region_from_arn(data['arn'])
     aws_nlb_name = extract_lb_name_from_arn(data['arn'])
 
     if aws_region is None or aws_nlb_name is None:

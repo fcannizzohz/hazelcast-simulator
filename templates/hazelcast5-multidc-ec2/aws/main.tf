@@ -21,9 +21,17 @@ locals {
   region_names = distinct([
     for dc in local.dcs : dc.region
   ])
-  primary_region       = local.region_names[0]
-  has_secondary_region = length(local.region_names) > 1
-  secondary_region     = local.has_secondary_region ? local.region_names[1] : local.primary_region
+  requested_primary_dc = try(local.dcs_by_name[local.settings.primary_dc], null)
+  requested_mc_dc      = try(local.dcs_by_name[local.settings.mc_dc], null)
+
+  # primary_dc is the user-facing anchor for the managed topology. When it is
+  # valid, its region defines the default provider and the primary side of any
+  # cross-region wiring. Falling back to the first region keeps validation
+  # errors readable instead of failing during local evaluation.
+  primary_region         = local.requested_primary_dc != null ? local.requested_primary_dc.region : local.region_names[0]
+  secondary_region_names = [for region in local.region_names : region if region != local.primary_region]
+  has_secondary_region   = length(local.secondary_region_names) > 0
+  secondary_region       = local.has_secondary_region ? local.secondary_region_names[0] : local.primary_region
 
   primary_dcs = [
     for dc in local.dcs : dc if dc.region == local.primary_region
@@ -56,6 +64,188 @@ locals {
     type  = local.settings.type
     Owner = local.settings.owner
   }, try(local.settings.extraTags, {}))
+
+  node_ingress_rules = [
+    {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Hazelcast"
+      from_port   = 5701
+      to_port     = 5801
+      protocol    = "tcp"
+      cidr_blocks = local.dc_cidrs
+    },
+    {
+      description = "Simulator"
+      from_port   = 9000
+      to_port     = 9001
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Hazelcast-tpc"
+      from_port   = 11000
+      to_port     = 12000
+      protocol    = "tcp"
+      cidr_blocks = local.dc_cidrs
+    },
+    {
+      description = "iperf3_udp"
+      from_port   = 3000
+      to_port     = 3000
+      protocol    = "udp"
+      cidr_blocks = local.dc_cidrs
+    },
+    {
+      description = "iperf3_tcp"
+      from_port   = 3000
+      to_port     = 3000
+      protocol    = "tcp"
+      cidr_blocks = local.dc_cidrs
+    },
+    {
+      description = "ICMP"
+      from_port   = -1
+      to_port     = -1
+      protocol    = "icmp"
+      cidr_blocks = local.dc_cidrs
+    }
+  ]
+
+  loadgenerator_ingress_rules = [
+    {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Simulator"
+      from_port   = 9000
+      to_port     = 9001
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "iperf3_udp"
+      from_port   = 3000
+      to_port     = 3000
+      protocol    = "udp"
+      cidr_blocks = local.dc_cidrs
+    },
+    {
+      description = "iperf3_tcp"
+      from_port   = 3000
+      to_port     = 3000
+      protocol    = "tcp"
+      cidr_blocks = local.dc_cidrs
+    },
+    {
+      description = "ICMP"
+      from_port   = -1
+      to_port     = -1
+      protocol    = "icmp"
+      cidr_blocks = local.dc_cidrs
+    }
+  ]
+
+  mc_ingress_rules = [
+    {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Management Center"
+      from_port   = 8080
+      to_port     = 8080
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Management Center TLS"
+      from_port   = 8443
+      to_port     = 8443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "ICMP"
+      from_port   = -1
+      to_port     = -1
+      protocol    = "icmp"
+      cidr_blocks = local.dc_cidrs
+    }
+  ]
+
+  mc_bootstrap_commands = [
+    "wget -q https://repository.hazelcast.com/download/management-center/hazelcast-management-center-5.0.tar.gz",
+    "tar -xzvf hazelcast-management-center-5.0.tar.gz",
+    "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 1; done",
+    "sudo apt-get -y update",
+    "sudo apt-get -y install openjdk-11-jdk",
+    "nohup hazelcast-management-center-5.0/bin/start.sh  > mc.out 2>&1 &",
+    "sleep 2"
+  ]
+
+  node_output_hosts = concat(
+    [
+      for instance in values(aws_instance.primary_nodes) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+    [
+      for instance in values(aws_instance.secondary_nodes) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+  )
+
+  loadgenerator_output_hosts = concat(
+    [
+      for instance in values(aws_instance.primary_loadgenerators) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+    [
+      for instance in values(aws_instance.secondary_loadgenerators) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+  )
+
+  mc_output_hosts = concat(
+    [
+      for instance in values(aws_instance.primary_mc) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+    [
+      for instance in values(aws_instance.secondary_mc) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+  )
 
   # Expand the per-DC counts into concrete instance descriptors. These locals
   # are later turned into for_each maps for the actual EC2 instances.
@@ -93,14 +283,14 @@ locals {
     ]
   ])
 
-  mc_instances = [
+  mc_instances = local.requested_mc_dc == null ? [] : [
     for index in range(try(local.settings.mc.count, 0)) : {
       key = "mc-${index}"
-      dc  = local.dcs_by_name[local.settings.mc_dc]
+      dc  = local.requested_mc_dc
     }
   ]
-  primary_mc_instances   = local.dcs_by_name[local.settings.mc_dc].region == local.primary_region ? local.mc_instances : []
-  secondary_mc_instances = local.has_secondary_region && local.dcs_by_name[local.settings.mc_dc].region == local.secondary_region ? local.mc_instances : []
+  primary_mc_instances   = local.requested_mc_dc != null && local.requested_mc_dc.region == local.primary_region ? local.mc_instances : []
+  secondary_mc_instances = local.requested_mc_dc != null && local.has_secondary_region && local.requested_mc_dc.region == local.secondary_region ? local.mc_instances : []
 }
 
 # The default provider targets the first region seen in dcs; a second aliased
@@ -114,6 +304,39 @@ provider "aws" {
   alias   = "secondary"
   profile = "default"
   region  = local.secondary_region
+}
+
+data "aws_vpc" "primary" {
+  id = local.primary_vpc_id
+}
+
+data "aws_vpc" "secondary" {
+  provider = aws.secondary
+  count    = local.has_secondary_region ? 1 : 0
+  id       = local.secondary_vpc_id
+}
+
+data "external" "cross_region_vpc_overlap" {
+  count = local.has_secondary_region ? 1 : 0
+  program = [
+    "python3",
+    "-c",
+    <<-PY
+import ipaddress
+import json
+import sys
+
+query = json.load(sys.stdin)
+primary = ipaddress.ip_network(query["primary"])
+secondary = ipaddress.ip_network(query["secondary"])
+json.dump({"overlap": str(primary.overlaps(secondary)).lower()}, sys.stdout)
+PY
+  ]
+
+  query = {
+    primary   = data.aws_vpc.primary.cidr_block
+    secondary = data.aws_vpc.secondary[0].cidr_block
+  }
 }
 
 resource "aws_key_pair" "keypair" {
@@ -154,13 +377,18 @@ resource "aws_key_pair" "keypair" {
     }
 
     precondition {
-      condition     = contains(keys(local.dcs_by_name), local.settings.primary_dc)
+      condition     = local.requested_primary_dc != null
       error_message = "primary_dc must match one of the names declared in dcs."
     }
 
     precondition {
-      condition     = contains(keys(local.dcs_by_name), local.settings.mc_dc)
+      condition     = local.requested_mc_dc != null
       error_message = "mc_dc must match one of the names declared in dcs."
+    }
+
+    precondition {
+      condition     = !local.has_secondary_region || data.external.cross_region_vpc_overlap[0].result.overlap == "false"
+      error_message = "Primary and secondary region VPC CIDRs must not overlap."
     }
   }
 }
@@ -296,60 +524,15 @@ resource "aws_security_group" "primary_node_sg" {
     Name = "Simulator Node Security Group ${local.settings.basename} ${local.primary_region}"
   }, local.common_resource_tags)
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Hazelcast"
-    from_port   = 5701
-    to_port     = 5801
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "Simulator"
-    from_port   = 9000
-    to_port     = 9001
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Hazelcast-tpc"
-    from_port   = 11000
-    to_port     = 12000
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "iperf3_udp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "udp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "iperf3_tcp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "ICMP"
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = local.dc_cidrs
+  dynamic "ingress" {
+    for_each = local.node_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
   }
 
   egress {
@@ -371,60 +554,15 @@ resource "aws_security_group" "secondary_node_sg" {
     Name = "Simulator Node Security Group ${local.settings.basename} ${local.secondary_region}"
   }, local.common_resource_tags)
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Hazelcast"
-    from_port   = 5701
-    to_port     = 5801
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "Simulator"
-    from_port   = 9000
-    to_port     = 9001
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Hazelcast-tpc"
-    from_port   = 11000
-    to_port     = 12000
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "iperf3_udp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "udp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "iperf3_tcp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "ICMP"
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = local.dc_cidrs
+  dynamic "ingress" {
+    for_each = local.node_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
   }
 
   egress {
@@ -444,44 +582,15 @@ resource "aws_security_group" "primary_loadgenerator_sg" {
     Name = "Simulator Load Generator Security Group ${local.settings.basename} ${local.primary_region}"
   }, local.common_resource_tags)
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Simulator"
-    from_port   = 9000
-    to_port     = 9001
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "iperf3_udp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "udp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "iperf3_tcp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "ICMP"
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = local.dc_cidrs
+  dynamic "ingress" {
+    for_each = local.loadgenerator_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
   }
 
   egress {
@@ -503,44 +612,15 @@ resource "aws_security_group" "secondary_loadgenerator_sg" {
     Name = "Simulator Load Generator Security Group ${local.settings.basename} ${local.secondary_region}"
   }, local.common_resource_tags)
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Simulator"
-    from_port   = 9000
-    to_port     = 9001
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "iperf3_udp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "udp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "iperf3_tcp"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = local.dc_cidrs
-  }
-
-  ingress {
-    description = "ICMP"
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = local.dc_cidrs
+  dynamic "ingress" {
+    for_each = local.loadgenerator_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
   }
 
   egress {
@@ -560,36 +640,15 @@ resource "aws_security_group" "primary_mc_sg" {
     Name = "Simulator MC Security Group ${local.settings.basename} ${local.primary_region}"
   }, local.common_resource_tags)
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Management Center"
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Management Center TLS"
-    from_port   = 8443
-    to_port     = 8443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "ICMP"
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = local.dc_cidrs
+  dynamic "ingress" {
+    for_each = local.mc_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
   }
 
   egress {
@@ -611,36 +670,15 @@ resource "aws_security_group" "secondary_mc_sg" {
     Name = "Simulator MC Security Group ${local.settings.basename} ${local.secondary_region}"
   }, local.common_resource_tags)
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Management Center"
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Management Center TLS"
-    from_port   = 8443
-    to_port     = 8443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "ICMP"
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = local.dc_cidrs
+  dynamic "ingress" {
+    for_each = local.mc_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
   }
 
   egress {
@@ -765,15 +803,7 @@ resource "aws_instance" "primary_mc" {
   }
 
   provisioner "remote-exec" {
-    inline = [
-      "wget -q https://repository.hazelcast.com/download/management-center/hazelcast-management-center-5.0.tar.gz",
-      "tar -xzvf hazelcast-management-center-5.0.tar.gz",
-      "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 1; done",
-      "sudo apt-get -y update",
-      "sudo apt-get -y install openjdk-11-jdk",
-      "nohup hazelcast-management-center-5.0/bin/start.sh  > mc.out 2>&1 &",
-      "sleep 2"
-    ]
+    inline = local.mc_bootstrap_commands
   }
 }
 
@@ -804,15 +834,7 @@ resource "aws_instance" "secondary_mc" {
   }
 
   provisioner "remote-exec" {
-    inline = [
-      "wget -q https://repository.hazelcast.com/download/management-center/hazelcast-management-center-5.0.tar.gz",
-      "tar -xzvf hazelcast-management-center-5.0.tar.gz",
-      "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 1; done",
-      "sudo apt-get -y update",
-      "sudo apt-get -y install openjdk-11-jdk",
-      "nohup hazelcast-management-center-5.0/bin/start.sh  > mc.out 2>&1 &",
-      "sleep 2"
-    ]
+    inline = local.mc_bootstrap_commands
   }
 }
 
@@ -820,22 +842,13 @@ resource "aws_instance" "secondary_mc" {
 # keeps backward compatibility with the simulator inventory importer and the
 # rest of the runtime, which already understands nodes/loadgenerators/mc.
 output "nodes" {
-  value = concat(
-    values(aws_instance.primary_nodes),
-    values(aws_instance.secondary_nodes),
-  )
+  value = local.node_output_hosts
 }
 
 output "loadgenerators" {
-  value = concat(
-    values(aws_instance.primary_loadgenerators),
-    values(aws_instance.secondary_loadgenerators),
-  )
+  value = local.loadgenerator_output_hosts
 }
 
 output "mc" {
-  value = concat(
-    values(aws_instance.primary_mc),
-    values(aws_instance.secondary_mc),
-  )
+  value = local.mc_output_hosts
 }
