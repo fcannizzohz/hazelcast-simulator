@@ -24,7 +24,7 @@ This runbook gives you three manual smoke-test scenarios:
 
 1. `hazelcast5-ec2` regression test with a normal single-DC setup
 2. `hazelcast5-multidc-ec2` single-region multi-DC with 3 members over 2 AZs
-3. `hazelcast5-multidc-ec2` two-region multi-DC with 2 AZs in one region and 1 AZ in a second region
+3. `hazelcast5-multidc-ec2` two-region multi-DC with 3 members, one in each AZ
 
 Each scenario uses the 5 minute smoke test from
 [smoke-tests.yaml](./smoke-tests.yaml).
@@ -173,6 +173,8 @@ This example spreads 3 members as:
 - `dc-b`: 1 member in `eu-west-2b`
 - `dc-c`: 1 member in `eu-central-1a`
 
+Like the single-region example, the load generator and MC stay in `dc-a` so the only real change is that the third member moves to a second region.
+
 Provision and run:
 
 ```bash
@@ -257,3 +259,204 @@ The most useful artifacts are usually:
 - `runs/<test>/<timestamp>/report/index.html`
 - `runs/<test>/<timestamp>/report/report.csv`
 - `runs/<test>/<timestamp>/results.yaml`
+
+## Appendix: Find AWS VPC, IGW, and CIDR values
+
+Use these commands to discover the values you need for:
+
+```yaml
+vpc_id: vpc-...
+internet_gateway_id: igw-...
+cidr_block: 172.31.88.0/24
+```
+
+The examples below use `eu-central-1`, but you can replace that region with any other target region.
+
+### Discover a matching AMI in another region
+
+First inspect the AMI you already used successfully in `eu-west-2`:
+
+```bash
+aws ec2 describe-images \
+  --region eu-west-2 \
+  --image-ids ami-03ceeb33c1e4abcd1 \
+  --query 'Images[].{ImageId:ImageId,Name:Name,Owner:ImageOwnerAlias,OwnerId:OwnerId,Created:CreationDate,PlatformDetails:PlatformDetails,Description:Description}' \
+  --output table
+```
+
+Print just the source image name:
+
+```bash
+aws ec2 describe-images \
+  --region eu-west-2 \
+  --image-ids ami-03ceeb33c1e4abcd1 \
+  --query 'Images[0].Name' \
+  --output text
+```
+
+Then search for the same image family in `eu-central-1` by owner and name pattern:
+
+```bash
+aws ec2 describe-images \
+  --region eu-central-1 \
+  --owners <OWNER_ID> \
+  --filters "Name=name,Values=<IMAGE_NAME_OR_PATTERN>" "Name=state,Values=available" \
+  --query 'sort_by(Images,&CreationDate)[-10:].{ImageId:ImageId,Name:Name,Created:CreationDate}' \
+  --output table
+```
+
+If the source image is Ubuntu 22.04 from Canonical, this shortcut usually works well:
+
+```bash
+aws ec2 describe-images \
+  --region eu-central-1 \
+  --owners 099720109477 \
+  --filters \
+    "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+    "Name=architecture,Values=x86_64" \
+    "Name=state,Values=available" \
+  --query 'sort_by(Images,&CreationDate)[-10:].{ImageId:ImageId,Name:Name,Created:CreationDate}' \
+  --output table
+```
+
+Show the default VPC and its CIDR:
+
+```bash
+aws ec2 describe-vpcs \
+  --region eu-central-1 \
+  --filters Name=is-default,Values=true \
+  --query 'Vpcs[].{VpcId:VpcId,Cidr:CidrBlock}' \
+  --output table
+```
+
+Show all VPCs in the region:
+
+```bash
+aws ec2 describe-vpcs \
+  --region eu-central-1 \
+  --query 'Vpcs[].{Name:Tags[?Key==`Name`]|[0].Value,VpcId:VpcId,Cidr:CidrBlock,Default:IsDefault}' \
+  --output table
+```
+
+Show the Internet Gateway attached to one VPC:
+
+```bash
+aws ec2 describe-internet-gateways \
+  --region eu-central-1 \
+  --filters Name=attachment.vpc-id,Values=<VPC_ID> \
+  --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
+  --output table
+```
+
+Show all Internet Gateways in the region:
+
+```bash
+aws ec2 describe-internet-gateways \
+  --region eu-central-1 \
+  --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
+  --output table
+```
+
+Show existing subnets in one VPC so you can choose a free subnet CIDR:
+
+```bash
+aws ec2 describe-subnets \
+  --region eu-central-1 \
+  --filters Name=vpc-id,Values=<VPC_ID> \
+  --query 'Subnets[].{SubnetId:SubnetId,Az:AvailabilityZone,Cidr:CidrBlock,Name:Tags[?Key==`Name`]|[0].Value}' \
+  --output table
+```
+
+### Create a custom non-overlapping VPC and Internet Gateway
+
+If the default VPC CIDR overlaps with another region, create a custom VPC. This
+example uses `10.50.0.0/16` in `eu-central-1`.
+
+Create the VPC:
+
+```bash
+aws ec2 create-vpc \
+  --region eu-central-1 \
+  --cidr-block 10.50.0.0/16 \
+  --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=simulator-multidc-eu-central-1}]'
+```
+
+Enable DNS support:
+
+```bash
+aws ec2 modify-vpc-attribute \
+  --region eu-central-1 \
+  --vpc-id <VPC_ID> \
+  --enable-dns-support
+```
+
+Enable DNS hostnames:
+
+```bash
+aws ec2 modify-vpc-attribute \
+  --region eu-central-1 \
+  --vpc-id <VPC_ID> \
+  --enable-dns-hostnames
+```
+
+Create the Internet Gateway:
+
+```bash
+aws ec2 create-internet-gateway \
+  --region eu-central-1 \
+  --tag-specifications 'ResourceType=internet-gateway,Tags=[{Key=Name,Value=simulator-multidc-eu-central-1-igw}]'
+```
+
+Attach it to the VPC:
+
+```bash
+aws ec2 attach-internet-gateway \
+  --region eu-central-1 \
+  --internet-gateway-id <IGW_ID> \
+  --vpc-id <VPC_ID>
+```
+
+Verify the VPC:
+
+```bash
+aws ec2 describe-vpcs \
+  --region eu-central-1 \
+  --vpc-ids <VPC_ID> \
+  --query 'Vpcs[].{VpcId:VpcId,Cidr:CidrBlock,Name:Tags[?Key==`Name`]|[0].Value}' \
+  --output table
+```
+
+Verify the Internet Gateway attachment:
+
+```bash
+aws ec2 describe-internet-gateways \
+  --region eu-central-1 \
+  --internet-gateway-ids <IGW_ID> \
+  --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
+  --output table
+```
+
+Example values to paste for a second-region DC after creating a custom VPC:
+
+```yaml
+    - name: dc-c
+      region: eu-central-1
+      availability_zone: eu-central-1a
+      vpc_id: <VPC_ID>
+      internet_gateway_id: <IGW_ID>
+      cidr_block: 10.50.90.0/24
+      nodes:
+          count: 1
+          ami: <EU_CENTRAL_1_AMI>
+      loadgenerators:
+          count: 0
+```
+
+Practical sequence:
+
+1. Check which AMI family you used in the first region.
+2. Find the matching AMI in the second region.
+3. Find the VPC you want to reuse, or create a custom non-overlapping VPC.
+4. Find or create the attached Internet Gateway for that VPC.
+5. List the existing subnets in that VPC.
+6. Pick an unused `/24` CIDR inside the VPC CIDR range for each DC.

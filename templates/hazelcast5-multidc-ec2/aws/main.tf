@@ -1,4 +1,17 @@
+# This plan is intentionally additive and bounded:
+# - it only backs the hazelcast5-multidc-ec2 template
+# - it keeps the simulator-facing inventory flat (nodes/loadgenerators/mc)
+# - it supports up to two AWS regions
+# - operator access is public (SSH/MC), while cluster traffic stays on private IPs
+#
+# The user-facing topology comes from inventory_plan.yaml as a list of DCs. Each
+# DC contributes a subnet/AZ placement and per-role counts, but the simulator
+# runtime still sees a normal flat inventory after terraform_import().
 locals {
+  # Read the inventory plan once and derive all region/DC groupings from it.
+  # The file is split into a "primary" and optional "secondary" region because
+  # this template uses a bounded number of provider aliases rather than trying
+  # to create providers dynamically.
   settings    = yamldecode(file("../inventory_plan.yaml"))
   private_key = file("../${local.settings.keypair.private_key}")
   public_key  = file("../${local.settings.keypair.public_key}")
@@ -44,6 +57,8 @@ locals {
     Owner = local.settings.owner
   }, try(local.settings.extraTags, {}))
 
+  # Expand the per-DC counts into concrete instance descriptors. These locals
+  # are later turned into for_each maps for the actual EC2 instances.
   primary_node_instances = flatten([
     for dc in local.primary_dcs : [
       for index in range(try(dc.nodes.count, 0)) : {
@@ -88,6 +103,8 @@ locals {
   secondary_mc_instances = local.has_secondary_region && local.dcs_by_name[local.settings.mc_dc].region == local.secondary_region ? local.mc_instances : []
 }
 
+# The default provider targets the first region seen in dcs; a second aliased
+# provider is used only when the plan spans a second region.
 provider "aws" {
   profile = "default"
   region  = local.primary_region
@@ -104,6 +121,8 @@ resource "aws_key_pair" "keypair" {
   public_key = local.public_key
 
   lifecycle {
+    # Keep validation close to the plan so invalid topologies fail before any
+    # infrastructure is created.
     precondition {
       condition     = length(local.region_names) > 0
       error_message = "At least one DC must be declared in dcs."
@@ -146,6 +165,18 @@ resource "aws_key_pair" "keypair" {
   }
 }
 
+resource "aws_key_pair" "secondary_keypair" {
+  provider   = aws.secondary
+  count      = local.has_secondary_region ? 1 : 0
+  key_name   = aws_key_pair.keypair.key_name
+  public_key = local.public_key
+}
+
+# Networking layout:
+# - one public subnet per DC/AZ
+# - one route table per region
+# - one VPC and one Internet Gateway per region
+# The plan reuses user-supplied VPC/IGW ids instead of creating new VPCs.
 resource "aws_subnet" "primary_dc_subnet" {
   for_each                = local.primary_dcs_by_name
   vpc_id                  = each.value.vpc_id
@@ -212,6 +243,9 @@ resource "aws_route_table_association" "secondary_dc_route_table_association" {
   route_table_id = aws_route_table.secondary_route_table[0].id
 }
 
+# When a second region is present, connect the two regional VPCs with one
+# peering link and add private routes for every remote DC CIDR. This is the
+# private data plane used by Hazelcast members, load generators, and MC.
 resource "aws_vpc_peering_connection" "inter_region" {
   count       = local.has_secondary_region ? 1 : 0
   vpc_id      = local.primary_vpc_id
@@ -250,6 +284,9 @@ resource "aws_route" "secondary_to_primary" {
   vpc_peering_connection_id = aws_vpc_peering_connection_accepter.inter_region[0].id
 }
 
+# Security groups are split by role and duplicated per region. They expose:
+# - public SSH / simulator control ports for operator workflow compatibility
+# - private Hazelcast / iperf / ICMP traffic across the declared DC CIDRs
 resource "aws_security_group" "primary_node_sg" {
   name        = "simulator-security-group-node-${local.settings.basename}-${replace(local.primary_region, "-", "_")}"
   description = "Security group for simulator nodes"
@@ -614,6 +651,9 @@ resource "aws_security_group" "secondary_mc_sg" {
   }
 }
 
+# Instance resources are also split by region to match the bounded provider
+# model. Per-DC AMI overrides are optional; when absent, top-level role AMIs are
+# used. Tags prefixed with passthrough: are copied into inventory.yaml later.
 resource "aws_instance" "primary_nodes" {
   for_each               = { for item in local.primary_node_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
@@ -637,7 +677,7 @@ resource "aws_instance" "primary_nodes" {
 resource "aws_instance" "secondary_nodes" {
   provider               = aws.secondary
   for_each               = { for item in local.secondary_node_instances : item.key => item }
-  key_name               = aws_key_pair.keypair.key_name
+  key_name               = aws_key_pair.secondary_keypair[0].key_name
   ami                    = try(each.value.dc.nodes.ami, local.settings.nodes.ami)
   instance_type          = local.settings.nodes.instance_type
   availability_zone      = each.value.dc.availability_zone
@@ -678,7 +718,7 @@ resource "aws_instance" "primary_loadgenerators" {
 resource "aws_instance" "secondary_loadgenerators" {
   provider               = aws.secondary
   for_each               = { for item in local.secondary_loadgenerator_instances : item.key => item }
-  key_name               = aws_key_pair.keypair.key_name
+  key_name               = aws_key_pair.secondary_keypair[0].key_name
   ami                    = try(each.value.dc.loadgenerators.ami, local.settings.loadgenerators.ami)
   instance_type          = local.settings.loadgenerators.instance_type
   availability_zone      = each.value.dc.availability_zone
@@ -696,6 +736,9 @@ resource "aws_instance" "secondary_loadgenerators" {
   }, local.common_resource_tags)
 }
 
+# MC is bootstrapped with a small remote-exec step so the simulator can expose a
+# ready-to-use browser endpoint after provisioning. It still talks to the
+# cluster over private networking because the member addresses use private_ip.
 resource "aws_instance" "primary_mc" {
   for_each               = { for item in local.primary_mc_instances : item.key => item }
   key_name               = aws_key_pair.keypair.key_name
@@ -737,7 +780,7 @@ resource "aws_instance" "primary_mc" {
 resource "aws_instance" "secondary_mc" {
   provider               = aws.secondary
   for_each               = { for item in local.secondary_mc_instances : item.key => item }
-  key_name               = aws_key_pair.keypair.key_name
+  key_name               = aws_key_pair.secondary_keypair[0].key_name
   ami                    = try(each.value.dc.mc.ami, local.settings.mc.ami)
   instance_type          = local.settings.mc.instance_type
   availability_zone      = each.value.dc.availability_zone
@@ -773,6 +816,9 @@ resource "aws_instance" "secondary_mc" {
   }
 }
 
+# Outputs deliberately stay flat even though provisioning is multi-DC. That
+# keeps backward compatibility with the simulator inventory importer and the
+# rest of the runtime, which already understands nodes/loadgenerators/mc.
 output "nodes" {
   value = concat(
     values(aws_instance.primary_nodes),

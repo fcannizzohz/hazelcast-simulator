@@ -35,6 +35,8 @@ mc:
     tenancy: null
 
 dcs:
+    # This example mirrors the single-region smoke test as closely as possible:
+    # keep the load generator and MC in dc-a, then spread 3 members one per AZ.
     - name: dc-a
       region: eu-west-2
       availability_zone: eu-west-2a
