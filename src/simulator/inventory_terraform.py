@@ -83,6 +83,12 @@ def terraform_import(terraform_plan):
 
 
 def __normalize_host_list(value):
+    if isinstance(value, dict):
+        # Terraform outputs may be a single host object or a map keyed by
+        # instance name/resource key. Normalize both to a plain host list.
+        if 'private_ip' in value or 'public_ip' in value or 'dns_name' in value:
+            return [value]
+        return list(value.values())
     if isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
         return value[0]
     return value

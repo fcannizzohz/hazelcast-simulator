@@ -16,19 +16,19 @@ keypair:
     private_key: key
 
 nodes:
-    instance_type: c5d.4xlarge
+    instance_type: t3.medium
     ami: ami-03ceeb33c1e4abcd1
     user: ubuntu
     tenancy: null
 
 loadgenerators:
-    instance_type: c5d.xlarge
+    instance_type: t3.small
     ami: ami-03ceeb33c1e4abcd1
     user: ubuntu
     tenancy: null
 
 mc:
-    instance_type: c5d.xlarge
+    instance_type: t3.small
     count: 1
     ami: ami-03ceeb33c1e4abcd1
     user: ubuntu
