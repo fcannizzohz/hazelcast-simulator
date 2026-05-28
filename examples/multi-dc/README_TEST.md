@@ -460,3 +460,144 @@ Practical sequence:
 4. Find or create the attached Internet Gateway for that VPC.
 5. List the existing subnets in that VPC.
 6. Pick an unused `/24` CIDR inside the VPC CIDR range for each DC.
+
+### Manual cleanup for a custom VPC and Internet Gateway
+
+If `inventory destroy` is blocked and you need to remove a custom second-region
+VPC manually, use this sequence.
+
+Set the values first:
+
+```bash
+export AWS_REGION=eu-central-1
+export VPC_ID=<VPC_ID>
+export IGW_ID=<IGW_ID>
+```
+
+Inspect what still exists in the VPC:
+
+```bash
+aws ec2 describe-subnets \
+  --region "$AWS_REGION" \
+  --filters Name=vpc-id,Values="$VPC_ID" \
+  --query 'Subnets[].SubnetId' \
+  --output table
+```
+
+```bash
+aws ec2 describe-route-tables \
+  --region "$AWS_REGION" \
+  --filters Name=vpc-id,Values="$VPC_ID" \
+  --query 'RouteTables[].RouteTableId' \
+  --output table
+```
+
+```bash
+aws ec2 describe-security-groups \
+  --region "$AWS_REGION" \
+  --filters Name=vpc-id,Values="$VPC_ID" \
+  --query 'SecurityGroups[].{GroupId:GroupId,Name:GroupName}' \
+  --output table
+```
+
+```bash
+aws ec2 describe-instances \
+  --region "$AWS_REGION" \
+  --filters Name=vpc-id,Values="$VPC_ID" Name=instance-state-name,Values=pending,running,stopping,stopped \
+  --query 'Reservations[].Instances[].InstanceId' \
+  --output table
+```
+
+```bash
+aws ec2 describe-vpc-peering-connections \
+  --region "$AWS_REGION" \
+  --query 'VpcPeeringConnections[?AccepterVpcInfo.VpcId==`'"$VPC_ID"'` || RequesterVpcInfo.VpcId==`'"$VPC_ID"'`].VpcPeeringConnectionId' \
+  --output table
+```
+
+Terminate any remaining instances:
+
+```bash
+aws ec2 terminate-instances \
+  --region "$AWS_REGION" \
+  --instance-ids <INSTANCE_ID_1> <INSTANCE_ID_2>
+```
+
+```bash
+aws ec2 wait instance-terminated \
+  --region "$AWS_REGION" \
+  --instance-ids <INSTANCE_ID_1> <INSTANCE_ID_2>
+```
+
+Delete any VPC peering connections:
+
+```bash
+aws ec2 delete-vpc-peering-connection \
+  --region "$AWS_REGION" \
+  --vpc-peering-connection-id <PCX_ID>
+```
+
+Delete non-default security groups:
+
+```bash
+aws ec2 delete-security-group \
+  --region "$AWS_REGION" \
+  --group-id <SG_ID>
+```
+
+Inspect route table associations:
+
+```bash
+aws ec2 describe-route-tables \
+  --region "$AWS_REGION" \
+  --filters Name=vpc-id,Values="$VPC_ID" \
+  --query 'RouteTables[].{RouteTableId:RouteTableId,Associations:Associations[*].{Id:RouteTableAssociationId,Main:Main}}' \
+  --output json
+```
+
+Disassociate each non-main route table association:
+
+```bash
+aws ec2 disassociate-route-table \
+  --region "$AWS_REGION" \
+  --association-id <RTB_ASSOC_ID>
+```
+
+Delete each non-main route table:
+
+```bash
+aws ec2 delete-route-table \
+  --region "$AWS_REGION" \
+  --route-table-id <RTB_ID>
+```
+
+Delete the subnets:
+
+```bash
+aws ec2 delete-subnet \
+  --region "$AWS_REGION" \
+  --subnet-id <SUBNET_ID>
+```
+
+Detach and delete the Internet Gateway:
+
+```bash
+aws ec2 detach-internet-gateway \
+  --region "$AWS_REGION" \
+  --internet-gateway-id "$IGW_ID" \
+  --vpc-id "$VPC_ID"
+```
+
+```bash
+aws ec2 delete-internet-gateway \
+  --region "$AWS_REGION" \
+  --internet-gateway-id "$IGW_ID"
+```
+
+Delete the VPC:
+
+```bash
+aws ec2 delete-vpc \
+  --region "$AWS_REGION" \
+  --vpc-id "$VPC_ID"
+```
