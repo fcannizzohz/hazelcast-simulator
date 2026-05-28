@@ -142,20 +142,3 @@ These were added as supporting example inputs, not as simulator runtime changes:
 
 They document example topologies but do not change `existing-cluster` behavior.
 
-## Notable Additions Versus Base Branch
-
-In short, compared with `master`, the branch adds:
-- a new managed multi-DC AWS template
-- bounded cross-region support for that template
-- per-DC AMI overrides
-- importer compatibility for new Terraform output shapes
-- a focused importer regression test
-- a practical multi-DC smoke-test runbook and example plans
-
-## Current Cleanup Note
-
-The branch also contains two tracked bytecode artifacts that were added along with the importer test:
-- [src/simulator/tests/__pycache__/test_inventory_terraform.cpython-311.pyc](./src/simulator/tests/__pycache__/test_inventory_terraform.cpython-311.pyc)
-- [src/simulator/tests/__pycache__/test_inventory_terraform.cpython-314.pyc](./src/simulator/tests/__pycache__/test_inventory_terraform.cpython-314.pyc)
-
-They are not part of the intended feature implementation and should ideally be removed before finalizing the branch.
