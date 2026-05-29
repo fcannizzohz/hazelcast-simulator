@@ -2,7 +2,6 @@ import json
 import os
 from os import path
 import subprocess
-import boto3
 import re
 
 from simulator.util import shell, exit_with_error, read_file, write_yaml
@@ -143,6 +142,8 @@ def extract_lb_name_from_arn(arn):
 
 
 def __get_nlb_private_ip(data):
+    import boto3
+
     aws_region = extract_aws_region_from_arn(data['arn'])
     aws_nlb_name = extract_lb_name_from_arn(data['arn'])
 
@@ -191,4 +192,3 @@ def __get_nlb_private_ip(data):
     else:
         print("Error: No private IP found.")
         return None
-
