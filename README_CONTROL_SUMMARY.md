@@ -1,5 +1,7 @@
 # Control Command Summary
 
+This file should be treated as the working spec for the `inventory control` feature.
+
 This change adds a new `inventory control ...` command family for failure testing on
 Terraform-managed AWS simulator projects.
 
@@ -24,9 +26,11 @@ The new control flow is intentionally narrow:
 - does not touch `existing-cluster`
 - operates on member workers, not broad host-level Java process cleanup
 
-## New Commands
+## Command Spec
 
-The following commands are now available through `inventory control`:
+### Implemented Commands
+
+The following commands are implemented today through `inventory control`:
 
 - `probe`
   - inspects agent state and discovered workers on one or more hosts
@@ -46,6 +50,58 @@ Failure-cycle commands support:
 - `--start-spread-seconds`
 - `--dry-run`
 - `--yes`
+
+### Planned Commands
+
+The following commands are part of the intended `inventory control` design and should
+be treated as next steps for the feature.
+
+- `restart-instance`
+  - managed AWS only
+  - explicit `--hosts` only
+  - performs a stop/start instance cycle, not terminate/recreate
+  - per host behavior:
+    - wait scheduled start offset
+    - stop instance
+    - wait `--lapse-seconds`
+    - start instance
+  - should support:
+    - `--hosts`
+    - `--lapse-seconds`
+    - `--start-spread-seconds`
+    - `--dry-run`
+    - `--yes`
+
+- `split-brain`
+  - managed AWS only
+  - host-based, not DC-based
+  - explicit `--hosts` and `--host-b` only
+  - creates a temporary bidirectional network cut between the two host sets
+  - easiest intended implementation:
+    - resolve both sides to private IPs
+    - install temporary host firewall rules to drop A<->B traffic
+    - wait `--lapse-seconds`
+    - remove those rules
+  - should support:
+    - `--hosts`
+    - `--host-b`
+    - `--lapse-seconds`
+    - `--start-spread-seconds`
+    - `--dry-run`
+    - `--yes`
+
+### Common Control Rules
+
+All current and planned destructive control commands should follow these rules:
+
+- managed AWS only
+- explicit host selection only
+- no `existing-cluster` support
+- no `--all-members`
+- `--yes` required unless `--dry-run`
+- host execution order should be deterministic
+- `--start-spread-seconds` should spread host start times evenly across the requested
+  window
 
 ## What Was Proven
 
