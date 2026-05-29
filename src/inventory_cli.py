@@ -4,6 +4,7 @@ import sys
 import argparse
 from os import path
 
+from simulator.control import InventoryControlCli
 from simulator.inventory_terraform import terraform_import, terraform_destroy, terraform_apply
 from simulator.inventory_lab import lab_apply, lab_destroy
 from simulator.util import load_yaml_file, exit_with_error, simulator_home, shell, now_seconds
@@ -16,6 +17,7 @@ usage = '''inventory <command> [<args>]
 
 The available commands are:
     apply               Applies the plan and updates the inventory
+    control             Probes and controls managed AWS inventory hosts
     destroy             Destroy the resources in the inventory
     import              Imports the inventory from the terraform plan
     install             Installs software on the inventory
@@ -540,6 +542,9 @@ class InventoryCli:
 
     def destroy(self, argv):
         InventoryDestroyCli(argv)
+
+    def control(self, argv):
+        InventoryControlCli(argv)
 
     def install(self, argv):
         InventoryInstallCli(argv)

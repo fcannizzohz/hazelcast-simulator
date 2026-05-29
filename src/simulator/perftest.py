@@ -135,13 +135,16 @@ class PerfTest:
             for i in range(0, repetitions):
                 exitcode, run_path = self.run_single_test(test)
 
-                if exitcode == 0:
-                    if not skip_report:
+                if not skip_report:
+                    try:
                         self.collect(run_path,
                                      tags,
                                      warmup_seconds=test.get('warmup_seconds'),
                                      cooldown_seconds=test.get('cooldown_seconds'))
-                elif self.exit_on_error:
+                    except Exception as report_error:
+                        warn(f"Failed to collect report data for [{run_path}]: {report_error}")
+
+                if exitcode != 0 and self.exit_on_error:
                     exit_with_error(f"Failed run coordinator, exitcode={self.exitcode}")
         return
 
@@ -577,7 +580,10 @@ class PerftestCollectCli:
 
         log_header("perftest collect")
         perftest = PerfTest()
-        perftest.collect(args.dir, tags, warmup_seconds=args.warmup, cooldown_seconds=args.cooldown)
+        perftest.collect(args.dir,
+                         tags,
+                         warmup_seconds=args.warmup[0],
+                         cooldown_seconds=args.cooldown[0])
 
         log_header("perftest collect: done")
 

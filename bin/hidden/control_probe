@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+
+
+def read_text(path):
+    return path.read_text().strip()
+
+
+def parse_parameters(path):
+    parameters = {}
+    for line in path.read_text().splitlines():
+        if not line or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        parameters[key] = value
+    return parameters
+
+
+def is_running(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def find_agent_pid_file():
+    candidates = [
+        Path.cwd() / "agent.pid",
+        Path.home() / "agent.pid",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def build_worker_state(worker_dir):
+    parameters_path = worker_dir / "parameters"
+    if not parameters_path.exists():
+        return None
+
+    parameters = parse_parameters(parameters_path)
+    pid_path = worker_dir / "worker.pid"
+    pid = int(read_text(pid_path)) if pid_path.exists() and read_text(pid_path) else None
+
+    return {
+        "run_id": worker_dir.parent.name,
+        "worker_name": worker_dir.name,
+        "worker_type": parameters.get("WORKER_TYPE"),
+        "worker_address": parameters.get("WORKER_ADDRESS"),
+        "public_address": parameters.get("PUBLIC_ADDRESS"),
+        "pid_file": str(pid_path),
+        "pid": pid,
+        "running": is_running(pid) if pid else False,
+    }
+
+
+def main():
+    simulator_home = Path(__file__).resolve().parents[2]
+    workers_root = simulator_home / "workers"
+
+    agent_pid_file = find_agent_pid_file()
+    agent_pid = None
+    if agent_pid_file and agent_pid_file.exists():
+        content = read_text(agent_pid_file)
+        if content:
+            agent_pid = int(content)
+
+    workers = []
+    if workers_root.exists():
+        for run_dir in sorted([item for item in workers_root.iterdir() if item.is_dir()]):
+            for worker_dir in sorted([item for item in run_dir.iterdir() if item.is_dir()]):
+                worker_state = build_worker_state(worker_dir)
+                if worker_state:
+                    workers.append(worker_state)
+
+    print(json.dumps({
+        "simulator_home": str(simulator_home),
+        "agent_pid_file": str(agent_pid_file) if agent_pid_file else None,
+        "agent_pid": agent_pid,
+        "agent_running": is_running(agent_pid) if agent_pid else False,
+        "workers_root": str(workers_root),
+        "worker_count": len(workers),
+        "workers": workers,
+    }, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
