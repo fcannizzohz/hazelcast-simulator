@@ -75,16 +75,26 @@ be treated as next steps for the feature.
 - `split-brain`
   - managed AWS only
   - host-based, not DC-based
-  - explicit `--hosts` and `--host-b` only
-  - creates a temporary bidirectional network cut between the two host sets
+  - explicit `--partitions` only
+  - creates a temporary network partition across two or more host groups
+  - partition grammar:
+    - `host1,host2/host3,host4/host5`
+    - `,` separates hosts inside one partition
+    - `/` separates partitions
+    - minimum 2 partitions
+    - a host may appear in only one partition
+  - network behavior:
+    - connectivity inside the same partition remains allowed
+    - connectivity between different partitions is blocked
+    - all partitions are mutually isolated from each other during the lapse window
   - easiest intended implementation:
-    - resolve both sides to private IPs
-    - install temporary host firewall rules to drop A<->B traffic
+    - resolve all hosts to private IPs
+    - install temporary host firewall rules to drop traffic from each partition to all
+      other partitions
     - wait `--lapse-seconds`
     - remove those rules
   - should support:
-    - `--hosts`
-    - `--host-b`
+    - `--partitions`
     - `--lapse-seconds`
     - `--start-spread-seconds`
     - `--dry-run`
