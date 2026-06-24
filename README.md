@@ -28,6 +28,7 @@ Please refer to the [Quickstart](#quickstart) to start your Simulator journey.
     * [Install](#install)
     * [Creating a benchmark](#creating-a-benchmark)
     * [Provisioning the environment](#provisioning-the-environment)
+    * [Installing and operating observability](#installing-and-operating-observability)
     * [SSH to nodes](#ssh-to-nodes)
     * [Running a test.](#running-a-test)
     * [Docker Usage Examples](#docker-usage-examples)
@@ -270,6 +271,45 @@ Install the Simulator:
    ```shell
    inventory install simulator
    ```
+
+## Installing and operating observability
+
+AWS templates can optionally provision a separate `observability` instance that runs Prometheus and Grafana. Prometheus
+scrapes the Management Center `/metrics` endpoint, so the `mc` group must also be provisioned.
+
+Enable both groups in `inventory_plan.yaml`:
+
+   ```yaml
+   mc:
+       count: 1
+
+   observability:
+       count: 1
+   ```
+
+Then provision the environment and install the stack:
+
+   ```shell
+   inventory apply
+   inventory install observability
+   ```
+
+The install command fails before making remote changes if the `mc` group is missing or empty. When installation
+completes, open:
+
+* Grafana: `http://<observability-public-ip>:3000`
+* Prometheus: `http://<observability-public-ip>:9090`
+
+To operate the stack from the benchmark directory:
+
+   ```shell
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose ps || sudo docker-compose ps)"
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose logs --tail=100 || sudo docker-compose logs --tail=100)"
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose restart || sudo docker-compose restart)"
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose pull && sudo docker compose up -d || sudo docker-compose pull && sudo docker-compose up -d)"
+   ```
+
+See [observability/README.md](observability/README.md) for the full runbook and troubleshooting notes.
 
 To destroy the environment, call the following:
 

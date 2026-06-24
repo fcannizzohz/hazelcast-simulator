@@ -42,3 +42,10 @@ mc:
     ami: ami-04e601abe3e1a910f
     user: ubuntu
     tenancy: null
+
+observability:
+    instance_type: c5.2xlarge
+    count: 0
+    ami: ami-04e601abe3e1a910f
+    user: ubuntu
+    tenancy: null

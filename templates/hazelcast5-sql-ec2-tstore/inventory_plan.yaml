@@ -37,3 +37,10 @@ mc:
     count: 1
     ami: ami-04505e74c0741db8d
     user: ubuntu
+
+observability:
+    instance_type: c5.2xlarge
+    count: 0
+    ami: ami-04505e74c0741db8d
+    user: ubuntu
+    tenancy: null

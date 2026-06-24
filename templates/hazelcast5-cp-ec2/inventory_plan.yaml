@@ -51,3 +51,13 @@ mc:
     ami: ami-0d527b8c289b4af7f
     user: ubuntu
     tenancy: null
+
+observability:
+    instance_type: c5.2xlarge
+    count: 0
+    # default AWS AMI
+    # ami: ami-05cafdf7c9f772ad2
+    # ubuntu
+    ami: ami-0d527b8c289b4af7f
+    user: ubuntu
+    tenancy: null

@@ -1,0 +1,26 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: hz-cluster
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+
+  # ── Management Center (aggregated metrics for all members) ───────────────
+  # MC collects metrics from every cluster member and exposes them at a
+  # single /metrics endpoint. Each time series carries a "member" label
+  # (e.g. member="hz1") set by MC, so per-member filtering still works in
+  # Grafana without scraping 5 separate targets.
+  - job_name: "hazelcast"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets:
+          - "management-center:8080"
+
+  # ── Prometheus self-monitoring ───────────────────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
