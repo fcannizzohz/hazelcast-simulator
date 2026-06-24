@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: simulator
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+  - job_name: "hazelcast"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets:
+          - "{{ mc_metrics_target }}"
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,999 @@
+{
+  "uid": "hz-cp-datastruct",
+  "title": "HZ CP \u2014 Data Structures",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "tags": [
+    "hazelcast",
+    "cp-subsystem",
+    "datastruct"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hz_runtime_uptime, mc_cluster)",
+        "query": {
+          "query": "label_values(hz_runtime_uptime, mc_cluster)",
+          "refId": "SV"
+        },
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "hide": 0,
+        "current": {
+          "text": "dev",
+          "value": "dev"
+        }
+      },
+      {
+        "name": "cp_group",
+        "label": "CP Group",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hz_raft_group_term{mc_cluster=\"$cluster\"}, name)",
+        "query": {
+          "query": "label_values(hz_raft_group_term{mc_cluster=\"$cluster\"}, name)",
+          "refId": "SV"
+        },
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "hide": 0,
+        "current": {}
+      },
+      {
+        "name": "member",
+        "label": "Member",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hz_runtime_uptime{mc_cluster=\"$cluster\"}, mc_member)",
+        "query": {
+          "query": "label_values(hz_runtime_uptime{mc_cluster=\"$cluster\"}, mc_member)",
+          "refId": "SV"
+        },
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "hide": 0,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 11
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## CP Data Structures\n\nMonitors the lifecycle and contention of **FencedLock**, **ISemaphore**, **IAtomicLong**, and **CP Sessions**.\n\nUnlike CPMap, these structures use **CP sessions** to guarantee safety: a client that acquires a lock or semaphore permit holds a session, and the server will auto-release the resource if the session expires (due to client crash or GC pause). Monitoring sessions alongside contention metrics is essential for detecting hung clients.\n\n**Data structure \u2192 CP group assignment in this cluster:**\n| Structure | Instances | CP Group |\n|-----------|-----------|----------|\n| FencedLock | lock0\u2013lock2 | group2 |\n| ISemaphore | sem0\u2013sem1 | group3 |\n| ISemaphore | sem2 | group7 |\n| IAtomicLong | counter0\u2013counter2 | group4 |\n| IAtomicLong | counter3\u2013counter4 | group6 |\n\n**Key questions this dashboard answers:**\n- Is any lock under high contention (high acquisition rate, or threads waiting for a permit)? *(Lock section)*\n- Are semaphore permits being exhausted \u2014 causing callers to block or time out? *(Semaphore section)*\n- Are atomic counters incrementing at the expected rate? *(AtomicLong section)*\n- Are any CP sessions at risk of expiring \u2014 indicating a hung or slow client? *(Sessions section)*\n\n**Note:** Lock wait time, CAS failure rate, and session count metrics are not yet exported by Management Center. The panels for those metrics will show \"No data\" until a future MC version exposes them."
+      },
+      "transparent": true
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "Inventory",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Live CP Maps",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_map_summary_live_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "maps",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Live AtomicLongs",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 12,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_atomiclong_summary_live_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "atomic longs",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Live FencedLocks",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_lock_summary_live_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "locks",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Live Semaphores",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 12,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_semaphore_summary_live_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "semaphores",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Destroyed Objects by Type (over time)",
+      "description": "Destroyed instances per type over time. CP structures are meant to be long-lived \u2014 a rising count means they are being re-created, which generates unnecessary Raft log traffic.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_map_summary_destroyed_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "CPMap",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_atomiclong_summary_destroyed_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "AtomicLong",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_lock_summary_destroyed_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "FencedLock",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(hz_cp_semaphore_summary_destroyed_count{mc_cluster=\"$cluster\"})",
+          "legendFormat": "ISemaphore",
+          "refId": "D"
+        }
+      ],
+      "options": {
+        "xField": "Time",
+        "barWidth": 0.9,
+        "fillOpacity": 80,
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "FencedLock",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Lock Acquisition Rate",
+      "description": "Lock acquisitions per second per lock name. A persistently high rate on a single lock indicates a contention hot spot. Requires FencedLock usage \u2014 will show 'No data' until locks are acquired.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(hz_cp_lock_acquireCount{mc_cluster=\"$cluster\"}[1m])",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 6
+          },
+          "min": 0,
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Lock Holder Count",
+      "description": "Number of times the current holder has acquired (re-entered) the lock. 0 = lock is free. > 0 = lock is held. A value that stays > 0 for a long time may indicate a hung client holding the lock.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_cp_lock_lockCount{mc_cluster=\"$cluster\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 6
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "ISemaphore",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Available Permits",
+      "description": "Available (unacquired) permits per semaphore. Drops to 0 when all permits are held \u2014 callers will block or time out. A flatline at 0 means the semaphore is fully saturated.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_cp_semaphore_available{mc_cluster=\"$cluster\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 6
+          },
+          "min": 0,
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Permit Drain Events",
+      "description": "Shows 1 when all permits are exhausted (available == 0). Use this to count how often and for how long the semaphore is fully saturated.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "clamp_min(hz_cp_semaphore_available{mc_cluster=\"$cluster\"} == 0, 1)",
+          "legendFormat": "{{name}} drained",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 6
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Permit Utilisation Ratio",
+      "description": "Fraction of permits currently in use: (max_observed \u2212 available) / max_observed. 0 = all permits free, 1 = all permits acquired (pool exhausted). Uses the 1-hour observed maximum as the denominator \u2014 accurate once the semaphore has been fully acquired at least once.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "1 - (hz_cp_semaphore_available{mc_cluster=\"$cluster\"} / clamp_min(max_over_time(hz_cp_semaphore_available{mc_cluster=\"$cluster\"}[1h]), 1))",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15
+          },
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "IAtomicLong",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Counter Value",
+      "description": "Current value of each IAtomicLong counter. Monotonically increasing under the traffic generator workload. A flat line means increments have stopped.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_cp_atomiclong_value{mc_cluster=\"$cluster\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 6
+          },
+          "min": 0,
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Increment Rate (per counter)",
+      "description": "Rate of change of each IAtomicLong value (proxy for increment rate). Derived from the raw value \u2014 not a direct counter metric.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(hz_cp_atomiclong_value{mc_cluster=\"$cluster\"}[1m])",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 6
+          },
+          "min": 0,
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "CP Sessions",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 59,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Session Heartbeat Version",
+      "description": "Increments on each session heartbeat (every session-heartbeat-interval-seconds = 5 s). A flat line means the client has stopped heartbeating \u2014 the session will expire after session-time-to-live-seconds (60 s), releasing all locks and permits held by that client.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_cp_session_version{mc_cluster=\"$cluster\"}",
+          "legendFormat": "session {{id}} @ {{mc_member}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 6
+          },
+          "min": 0,
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 19,
+      "type": "table",
+      "title": "Session Expiry",
+      "description": "Expiration timestamp for each active CP session. Sessions near their expiry time with a flat heartbeat version indicate a hung client that may lose its locks or semaphore permits.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 60,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_cp_session_expirationTime{mc_cluster=\"$cluster\"}",
+          "legendFormat": "{{id}} @ {{mc_member}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "sortBy": []
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso"
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Session Heartbeat Rate",
+      "description": "Rate of CP session heartbeat increments per second (derived from hz_cp_session_version). A healthy session heartbeats every 5 s (\u2248 0.2 hz). Rate dropping to 0 means the client has stopped heartbeating \u2014 the session will expire in \u2264 60 s (session-time-to-live), releasing any FencedLocks or ISemaphore permits it holds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 68,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(hz_cp_session_version{mc_cluster=\"$cluster\"}[30s])",
+          "legendFormat": "session {{id}} / {{mc_member}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          },
+          "min": 0,
+          "unit": "hertz",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

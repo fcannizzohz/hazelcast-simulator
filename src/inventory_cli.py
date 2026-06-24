@@ -4,6 +4,7 @@ import sys
 import argparse
 from os import path
 
+from inventory import load_hosts
 from simulator.control import InventoryControlCli
 from simulator.inventory_terraform import terraform_import, terraform_destroy, terraform_apply
 from simulator.inventory_lab import lab_apply, lab_destroy
@@ -128,6 +129,35 @@ Microsoft
 """
 
 
+def require_inventory_hosts(host_pattern, role):
+    hosts = load_hosts(host_pattern=host_pattern)
+    if not hosts:
+        exit_with_error(
+            f"No hosts matched [{host_pattern}] for {role}. "
+            "Provision the observability inventory group before installing observability."
+        )
+    return hosts
+
+
+def require_single_inventory_host(host_pattern, role):
+    hosts = load_hosts(host_pattern=host_pattern)
+    if not hosts:
+        exit_with_error(
+            f"No hosts matched [{host_pattern}] for {role}. "
+            "Set mc.count: 1 in inventory_plan.yaml, run inventory apply, and rerun this command."
+        )
+    if len(hosts) > 1:
+        exit_with_error(f"Expected exactly one {role} host for [{host_pattern}], found {len(hosts)}.")
+    return hosts[0]
+
+
+def management_center_metrics_target(host):
+    address = host.get("private_ip") or host.get("public_ip")
+    if not address:
+        exit_with_error("Management Center host does not have a private_ip or public_ip in inventory.yaml.")
+    return f"{address}:8080"
+
+
 class InventoryInstallCli:
 
     def __init__(self, argv):
@@ -140,6 +170,7 @@ class InventoryInstallCli:
             async_profiler  Installs Async Profiler
             iperf3          Installs iperf3 Profiler
             tls_keystores   Installs TLS keystore and truststores for secure connections
+            observability   Installs Prometheus and Grafana
         '''
 
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -158,7 +189,7 @@ class InventoryInstallCli:
                                          description='Install Java')
         parser.add_argument("--url", help="The url of the JDK tar.gz file", default=default_url)
         parser.add_argument("--examples", help="Shows example urls", action='store_true')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
 
         args = parser.parse_args(argv)
 
@@ -187,7 +218,7 @@ class InventoryInstallCli:
                             default="https://github.com/async-profiler/async-profiler/releases/download/v3.0/async-profiler-3.0-linux-x64.tar.gz")
         parser.add_argument("--hosts",
                             help="The target hosts.",
-                            default="all:!mc")
+                            default="all:!mc:!observability")
 
         args = parser.parse_args(argv)
 
@@ -206,7 +237,7 @@ class InventoryInstallCli:
     def perf(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install Linux Perf')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
 
         args = parser.parse_args(argv)
 
@@ -222,7 +253,7 @@ class InventoryInstallCli:
     def simulator(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install Simulator')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
         args = parser.parse_args(argv)
 
         hosts = args.hosts
@@ -239,7 +270,7 @@ class InventoryInstallCli:
     def iperf3(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install iperf3')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
         args = parser.parse_args(argv)
 
         hosts = args.hosts
@@ -262,6 +293,22 @@ class InventoryInstallCli:
 
         log_header("Generating and installing TLS keystore and truststores")
         cmd = f"ansible-playbook --inventory inventory.yaml {simulator_home}/playbooks/install_tls_keystores.yaml -e rsa_key_size='{rsa_key_size}'"
+        self._run_installation(cmd)
+
+    def observability(self, argv):
+        parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                         description='Install Prometheus and Grafana')
+        parser.add_argument("--hosts", help="The target hosts.", default="observability")
+        args = parser.parse_args(argv)
+
+        mc = require_single_inventory_host("mc", "Management Center")
+        require_inventory_hosts(args.hosts, "observability")
+        mc_metrics_target = management_center_metrics_target(mc)
+
+        log_header("Installing Observability")
+        info(f"hosts={args.hosts}")
+        info(f"mc_metrics_target={mc_metrics_target}")
+        cmd = f"ansible-playbook --limit {args.hosts} --inventory inventory.yaml {simulator_home}/playbooks/install_observability.yaml -e simulator_home='{simulator_home}' -e mc_metrics_target='{mc_metrics_target}'"
         self._run_installation(cmd)
 
     def _run_installation(self, cmd):

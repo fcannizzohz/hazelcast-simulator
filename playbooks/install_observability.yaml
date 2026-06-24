@@ -1,0 +1,60 @@
+---
+- hosts: all
+
+  vars:
+    simulator_home: null
+    mc_metrics_target: null
+    observability_dir: ~{{ console_user | default(ansible_user) }}/hazelcast-observability
+
+  tasks:
+  - name: Validate Management Center metrics target
+    fail:
+      msg: "mc_metrics_target is required, for example 10.0.20.10:8080"
+    when: mc_metrics_target is not defined or mc_metrics_target | length == 0
+
+  - name: Install Docker on Debian based hosts
+    shell: |
+      set -e
+      apt-get update
+      apt-get install -y docker.io rsync
+      apt-get install -y docker-compose-plugin || apt-get install -y docker-compose
+      systemctl enable --now docker
+    become: yes
+    when: ansible_os_family == "Debian"
+
+  - name: Install Docker on RedHat based hosts
+    shell: |
+      set -e
+      yum -y install docker rsync
+      yum -y install docker-compose-plugin || true
+      systemctl enable --now docker
+    become: yes
+    when: ansible_os_family == "RedHat"
+
+  - name: Create observability directory
+    file:
+      path: "{{ observability_dir }}"
+      state: directory
+      mode: 0775
+
+  - name: Set correct ssh key path
+    set_fact:
+      ansible_ssh_private_key_file: "{{ ansible_ssh_private_key_file | realpath }}"
+    when: ansible_ssh_private_key_file is defined
+
+  - name: Copy observability assets
+    synchronize:
+      src: "{{ simulator_home }}/observability/"
+      dest: "{{ observability_dir }}/"
+
+  - name: Render Prometheus config
+    template:
+      src: "{{ simulator_home }}/observability/prometheus/prometheus.yml.j2"
+      dest: "{{ observability_dir }}/prometheus/prometheus.yml"
+      mode: 0644
+
+  - name: Start Prometheus and Grafana
+    shell: docker compose up -d || docker-compose up -d
+    args:
+      chdir: "{{ observability_dir }}"
+    become: yes

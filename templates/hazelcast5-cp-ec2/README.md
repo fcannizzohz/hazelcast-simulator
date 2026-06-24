@@ -8,3 +8,17 @@ w.r.t. the CP member count. Everything else runs as documented
 ```bash
 perftest run test-3member-iatomicreference-128kb-set-alter-cas-casopt.yaml
 ```
+
+## Observability
+
+This template can provision a separate Prometheus/Grafana host. Set both `mc.count: 1`
+and `observability.count: 1` in `inventory_plan.yaml`; Management Center is required
+because Prometheus scrapes its `/metrics` endpoint.
+
+```bash
+inventory apply
+inventory install observability
+```
+
+Open Grafana on `http://<observability-public-ip>:3000` and Prometheus on
+`http://<observability-public-ip>:9090`.
