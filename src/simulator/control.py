@@ -3,6 +3,9 @@ import argparse
 import json
 import sys
 import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 from simulator.hosts import public_ip, ssh_options, ssh_user
 from simulator.log import error, info, log_header
@@ -30,6 +33,13 @@ def resolve_hosts(host_pattern):
     if not hosts:
         fail(f"Could not resolve any hosts for [{host_pattern}]")
     return hosts
+
+
+def resolve_single_host(host_pattern, role_name):
+    hosts = resolve_hosts(host_pattern)
+    if len(hosts) != 1:
+        fail(f"Expected exactly one {role_name} host for [{host_pattern}], found [{len(hosts)}]")
+    return hosts[0]
 
 
 def run_probe(host):
@@ -77,6 +87,54 @@ def build_host_schedule(hosts, start_spread_seconds):
     ]
 
 
+def build_diagnostics_url(mc_host, cluster_name, mc_port):
+    encoded_cluster = quote(cluster_name, safe="")
+    return f"http://{public_ip(mc_host)}:{mc_port}/rest/clusters/{encoded_cluster}/diagnostics/config"
+
+
+def build_diagnostics_payload(enabled, auto_off_minutes):
+    return {
+        "enabled": enabled,
+        "autoOffDurationInMinutes": auto_off_minutes,
+    }
+
+
+def call_diagnostics_api(mc_host, cluster_name, mc_port, method, payload=None):
+    url = build_diagnostics_url(mc_host, cluster_name, mc_port)
+    body = None
+    headers = {}
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    request = Request(url, data=body, headers=headers, method=method)
+    try:
+        with urlopen(request, timeout=30) as response:
+            response_body = response.read().decode("utf-8")
+            return {
+                "url": url,
+                "status": response.status,
+                "body": json.loads(response_body) if response_body else None,
+            }
+    except HTTPError as e:
+        response_body = e.read().decode("utf-8", errors="replace")
+        fail(
+            f"Management Center diagnostics API returned HTTP {e.code} for [{method} {url}]. "
+            f"The API requires Enterprise MC licensing and a configured cluster connection. "
+            f"Response: {response_body}"
+        )
+    except URLError as e:
+        fail(f"Could not reach Management Center diagnostics API at [{url}]: {e.reason}")
+
+
+def require_dynamic_diagnostics(status_response):
+    body = status_response.get("body") or {}
+    metadata = body.get("diagnosticsConfigMetadata") or {}
+    can_configure = metadata.get("canBeConfiguredDynamically")
+    if can_configure is False:
+        fail("Diagnostics cannot be configured dynamically for this cluster/member set.")
+
+
 def execute_member_cycle(host, signal_name, lapse_seconds, start_offset_seconds, dry_run):
     time.sleep(start_offset_seconds)
 
@@ -109,6 +167,9 @@ class InventoryControlCli:
         usage = '''control <command> [<args>]
 
         The available commands are:
+            diagnostics-off          Disable member diagnostics through Management Center
+            diagnostics-on           Enable member diagnostics through Management Center
+            diagnostics-status       Read member diagnostics state through Management Center
             graceful-restart-members  Gracefully stop member workers, wait, then restart them
             kill-members              Kill member workers, wait, then restart them
             member_restart  Restarts dead managed member workers from their worker directories
@@ -222,6 +283,93 @@ class InventoryControlCli:
 
     def kill_members(self, argv):
         self._member_cycle(argv, "kill", "Control kill members")
+
+    def diagnostics_status(self, argv):
+        args = self._diagnostics_args(argv, "Read member diagnostics state through Management Center")
+        self._load_control_inventory()
+        mc_host = resolve_single_host(args.mc_hosts, "Management Center")
+
+        log_header("Control diagnostics status")
+        info(f"mc_hosts={args.mc_hosts}")
+        info(f"cluster={args.cluster}")
+        response = call_diagnostics_api(mc_host, args.cluster, args.mc_port, "GET")
+        info(json.dumps({
+            "management_center": public_ip(mc_host),
+            "diagnostics": response,
+        }, indent=2, sort_keys=True))
+        log_header("Control diagnostics status: Done")
+
+    def diagnostics_on(self, argv):
+        args = self._diagnostics_args(argv, "Enable member diagnostics through Management Center", include_auto_off=True)
+        if args.auto_off_minutes < 0:
+            fail("--auto-off-minutes must be non-negative")
+
+        self._load_control_inventory()
+        mc_host = resolve_single_host(args.mc_hosts, "Management Center")
+
+        log_header("Control diagnostics on")
+        info(f"mc_hosts={args.mc_hosts}")
+        info(f"cluster={args.cluster}")
+        info(f"auto_off_minutes={args.auto_off_minutes}")
+        status = call_diagnostics_api(mc_host, args.cluster, args.mc_port, "GET")
+        require_dynamic_diagnostics(status)
+        update = call_diagnostics_api(
+            mc_host,
+            args.cluster,
+            args.mc_port,
+            "POST",
+            build_diagnostics_payload(True, args.auto_off_minutes),
+        )
+        status = call_diagnostics_api(mc_host, args.cluster, args.mc_port, "GET")
+        info(json.dumps({
+            "management_center": public_ip(mc_host),
+            "update": update,
+            "diagnostics": status,
+        }, indent=2, sort_keys=True))
+        log_header("Control diagnostics on: Done")
+
+    def diagnostics_off(self, argv):
+        args = self._diagnostics_args(argv, "Disable member diagnostics through Management Center")
+
+        self._load_control_inventory()
+        mc_host = resolve_single_host(args.mc_hosts, "Management Center")
+
+        log_header("Control diagnostics off")
+        info(f"mc_hosts={args.mc_hosts}")
+        info(f"cluster={args.cluster}")
+        status = call_diagnostics_api(mc_host, args.cluster, args.mc_port, "GET")
+        require_dynamic_diagnostics(status)
+        update = call_diagnostics_api(
+            mc_host,
+            args.cluster,
+            args.mc_port,
+            "POST",
+            build_diagnostics_payload(False, 0),
+        )
+        status = call_diagnostics_api(mc_host, args.cluster, args.mc_port, "GET")
+        info(json.dumps({
+            "management_center": public_ip(mc_host),
+            "update": update,
+            "diagnostics": status,
+        }, indent=2, sort_keys=True))
+        log_header("Control diagnostics off: Done")
+
+    def _diagnostics_args(self, argv, description, include_auto_off=False):
+        parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                         description=description)
+        parser.add_argument("--mc-hosts", default="mc", help="Management Center inventory host pattern.")
+        parser.add_argument("--mc-port", type=int, default=8080, help="Management Center HTTP port.")
+        parser.add_argument("--cluster", default="workers", help="Management Center cluster name.")
+        if include_auto_off:
+            parser.add_argument("--auto-off-minutes", type=int, default=60,
+                                help="Minutes after which MC automatically disables diagnostics. Use 0 for no timeout.")
+        return parser.parse_args(argv)
+
+    def _load_control_inventory(self):
+        from simulator.util import load_yaml_file
+
+        inventory_plan = load_yaml_file("inventory_plan.yaml")
+        ensure_managed_aws_inventory_plan(inventory_plan)
 
     def _member_cycle(self, argv, signal_name, header):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,

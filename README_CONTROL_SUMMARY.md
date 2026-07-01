@@ -2,8 +2,8 @@
 
 This file should be treated as the working spec for the `inventory control` feature.
 
-This change adds a new `inventory control ...` command family for failure testing on
-Terraform-managed AWS simulator projects.
+This change adds a new `inventory control ...` command family for failure testing and
+runtime diagnostics control on Terraform-managed AWS simulator projects.
 
 ## What Problem It Solves
 
@@ -16,15 +16,22 @@ This change adds that missing control path so we can:
 - kill only member workers instead of all Java on the machine
 - restart the same logical member from its existing worker directory
 - run controlled member failure cycles with a configurable lapse and staggered start
+- enable or disable Hazelcast member diagnostics dynamically through Management Center
+  without restarting workers
 
 ## Scope
 
 The new control flow is intentionally narrow:
 
 - supported only for `provisioner: terraform` with `terraform_plan: aws`
-- supported only for explicit `--hosts` selections
+- failure-cycle commands are supported only for explicit `--hosts` selections
+- diagnostics commands target the configured Management Center host, defaulting to the
+  `mc` inventory group
 - does not touch `existing-cluster`
-- operates on member workers, not broad host-level Java process cleanup
+- member failure commands operate on member workers, not broad host-level Java process
+  cleanup
+- diagnostics commands use the Management Center REST API and require Enterprise MC
+  licensing plus a configured cluster connection
 
 ## Command Spec
 
@@ -42,6 +49,13 @@ The following commands are implemented today through `inventory control`:
   - sends `SIGTERM`, waits a configured lapse, then restarts the member
 - `kill-members`
   - sends `SIGKILL`, waits a configured lapse, then restarts the member
+- `diagnostics-status`
+  - reads Hazelcast diagnostics state through Management Center
+- `diagnostics-on`
+  - enables Hazelcast diagnostics dynamically through Management Center
+  - supports an auto-off timeout
+- `diagnostics-off`
+  - disables Hazelcast diagnostics dynamically through Management Center
 
 Failure-cycle commands support:
 
@@ -50,6 +64,48 @@ Failure-cycle commands support:
 - `--start-spread-seconds`
 - `--dry-run`
 - `--yes`
+
+Diagnostics commands support:
+
+- `--cluster`
+  - defaults to `workers`
+- `--mc-hosts`
+  - defaults to `mc`
+  - must resolve to exactly one Management Center host
+- `--mc-port`
+  - defaults to `8080`
+- `--auto-off-minutes`
+  - `diagnostics-on` only
+  - defaults to `60`
+  - use `0` for no timeout
+
+Example diagnostics workflow:
+
+```bash
+inventory control diagnostics-status --cluster workers
+inventory control diagnostics-on --cluster workers --auto-off-minutes 60
+inventory control diagnostics-off --cluster workers
+```
+
+The diagnostics commands call:
+
+```text
+GET  /rest/clusters/{cluster}/diagnostics/config
+POST /rest/clusters/{cluster}/diagnostics/config
+```
+
+The POST body is limited by the MC API to:
+
+```json
+{
+  "enabled": true,
+  "autoOffDurationInMinutes": 60
+}
+```
+
+Management Center can toggle diagnostics dynamically, but it cannot dynamically change
+the diagnostics log directory. The member JVM must be preconfigured at startup with the
+directory and rolling settings.
 
 ### Planned Commands
 
@@ -113,6 +169,46 @@ All current and planned destructive control commands should follow these rules:
 - `--start-spread-seconds` should spread host start times evenly across the requested
   window
 
+Diagnostics commands are not destructive host-cycle commands, so they do not require
+`--hosts`, `--dry-run`, or `--yes`. They should still fail clearly when:
+
+- the inventory is not a managed AWS Terraform project
+- the `mc` host selection is missing or resolves to more than one host
+- Management Center is unreachable
+- Management Center returns an Enterprise-license or cluster-connection error
+- MC reports that diagnostics cannot be configured dynamically
+
+## Diagnostics Log Collection
+
+The Hazelcast 4+ worker script now preconfigures member diagnostics before the member
+starts:
+
+```text
+-Dhazelcast.diagnostics.enabled=false
+-Dhazelcast.diagnostics.directory=<worker-dir>/diagnostics
+-Dhazelcast.diagnostics.filename.prefix=<worker-name>
+-Dhazelcast.diagnostics.max.rolled.file.size.mb=50
+-Dhazelcast.diagnostics.max.rolled.file.count=10
+```
+
+The default state is disabled so diagnostics do not run unless explicitly enabled
+through MC. The directory and rolling properties are still present from startup, which
+lets MC turn diagnostics on later without restarting the worker.
+
+If a project already supplies one of these `-Dhazelcast.diagnostics.*` properties in
+`member_args`, that explicit value is preserved and the default is not appended for
+that property.
+
+Generated diagnostics files are written under each worker directory:
+
+```text
+<worker-dir>/diagnostics/
+```
+
+The existing Simulator artifact download already rsyncs worker directories at the end
+of the run, excluding only `upload`, so diagnostics files are collected automatically
+when they exist.
+
 ## What Was Proven
 
 The implementation was validated on managed AWS projects from a laptop using the normal
@@ -128,6 +224,9 @@ The key behaviors that were proven:
   directory without restarting the agent
 - `kill-members` and `graceful-restart-members` can perform a full stop/wait/restart
   cycle against explicit hosts
+- diagnostics control commands build the correct MC REST URLs and POST bodies
+- member startup preconfigures diagnostics output under the worker directory without
+  overriding explicit `member_args` diagnostics properties
 
 On a multi-member run, the restarted member came back under the same run ID with a new
 PID, which is the behavior needed for failure/rejoin testing.
@@ -145,6 +244,9 @@ new control flow:
   - useful for intentional failure tests that still produce reportable artifacts
 - `PerftestCollectCli` now passes warmup and cooldown as integers instead of one-item
   lists
+- the Hazelcast 4+ worker script preconfigures diagnostics output under the worker
+  directory so MC can enable diagnostics dynamically and the normal artifact download
+  collects the logs
 
 ## Current Caveat
 

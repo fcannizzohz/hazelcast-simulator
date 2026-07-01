@@ -1638,22 +1638,44 @@ Hazelcast has a diagnostics system which provides detailed insights on what is h
 overhead
 that we always enable it when doing benchmarks.
 
-```yaml
+Member workers started by the Hazelcast 4+ driver are preconfigured with a diagnostics output directory under the
+worker directory:
 
-members_args: "-Dhazelcast.diagnostics.enabled=true \
-                               -Dhazelcast.diagnostics.metric.level=info \
-                               -Dhazelcast.diagnostics.invocation.sample.period.seconds=30 \
-                               -Dhazelcast.diagnostics.pending.invocations.period.seconds=30 \
-                               -Dhazelcast.diagnostics.slowoperations.period.seconds=30" \
-
-client_args: "-Dhazelcast.diagnostics.enabled=true \
-                               -Dhazelcast.diagnostics.metric.level=info" \
-
+```text
+<worker-dir>/diagnostics
 ```
 
-If these flags are added to the `client_args` and `member_args` respectively, both client and server will have
-diagnostics enabled. Both will write a diagnostics file. Once the Simulator
-run is completed and the artifacts are downloaded, the diagnostics files can be analyzed.
+Diagnostics are disabled at member startup, but the directory, file prefix, and rolling policy are already fixed in
+the member JVM arguments. This allows diagnostics to be enabled dynamically through Management Center without
+restarting the worker, and any generated diagnostics files are downloaded with the normal worker artifacts at the end
+of a run.
+If `member_args` already contains a `-Dhazelcast.diagnostics.*` property, that explicit value is preserved.
+
+Use Management Center to enable, disable, or inspect diagnostics while the cluster is running:
+
+```bash
+inventory control diagnostics-status --cluster workers
+inventory control diagnostics-on --cluster workers --auto-off-minutes 60
+inventory control diagnostics-off --cluster workers
+```
+
+The commands use the Management Center diagnostics configuration REST API and default to the `mc` inventory group on
+port `8080`. The API requires Enterprise Management Center licensing and a configured cluster connection. The
+`diagnostics-on` command does not control the log directory; that has to be preconfigured at member startup, which the
+default worker script now does.
+
+The member-side defaults can be overridden in the worker parameters if needed:
+
+```yaml
+DIAGNOSTICS_PRECONFIGURE: "true"
+DIAGNOSTICS_DIRECTORY: "/custom/path"
+DIAGNOSTICS_FILE_PREFIX: "member"
+DIAGNOSTICS_MAX_ROLLED_FILE_SIZE_MB: "50"
+DIAGNOSTICS_MAX_ROLLED_FILE_COUNT: "10"
+```
+
+If you provide a custom `worker_sh`, include equivalent `-Dhazelcast.diagnostics.*` properties in the member JVM
+arguments so dynamic enablement writes into the worker directory and the files are collected automatically.
 
 ## Logging
 

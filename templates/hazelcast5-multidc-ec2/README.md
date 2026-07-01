@@ -113,6 +113,19 @@ inventory control graceful-restart-members --hosts nodes --dry-run
 inventory control graceful-restart-members --hosts nodes --lapse-seconds 30 --yes
 ```
 
+When Management Center is provisioned and connected to the cluster, member
+diagnostics can be toggled dynamically without restarting workers:
+
+```shell
+inventory control diagnostics-status --cluster workers
+inventory control diagnostics-on --cluster workers --auto-off-minutes 60
+inventory control diagnostics-off --cluster workers
+```
+
+The default member worker script preconfigures diagnostics output under each
+worker directory, so generated diagnostics files are downloaded with the normal
+run artifacts.
+
 Backward compatibility notes:
 - existing templates are unchanged
 - existing single-DC workflows remain unchanged

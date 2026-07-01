@@ -164,6 +164,19 @@ successful install.
 Hazelcast members are actually running. If you only did inventory apply/install
 but have not started a test yet, the cluster may not exist yet.
 
+Toggle member diagnostics dynamically while the cluster is running:
+
+```bash
+./bin/docker-sim inventory control diagnostics-status --cluster workers
+./bin/docker-sim inventory control diagnostics-on --cluster workers --auto-off-minutes 60
+./bin/docker-sim inventory control diagnostics-off --cluster workers
+```
+
+These commands use the MC diagnostics configuration REST API. Enterprise MC
+licensing and a configured cluster connection are required. The member worker
+script preconfigures diagnostics output under each worker directory, so any
+diagnostics files generated during the run are downloaded with the normal run
+artifacts under each worker's `diagnostics/` directory.
 
 Tail the observability stack:
 

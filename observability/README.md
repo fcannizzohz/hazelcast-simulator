@@ -92,6 +92,37 @@ watermark, and snapshot metrics.
 
 Run these commands from the benchmark directory.
 
+### Diagnostics
+
+Member workers are started with a diagnostics directory preconfigured under each worker directory, but diagnostics are
+disabled until you turn them on. Use Management Center to toggle diagnostics dynamically without restarting workers:
+
+```bash
+inventory control diagnostics-status --cluster workers
+inventory control diagnostics-on --cluster workers --auto-off-minutes 60
+inventory control diagnostics-off --cluster workers
+```
+
+The commands call the Management Center diagnostics configuration REST API on the `mc` inventory group. The API
+requires Enterprise Management Center licensing and a configured cluster connection. Management Center can toggle
+diagnostics on and off, but it cannot change the diagnostics log directory dynamically; the default worker script
+preconfigures member diagnostics output under `<worker-dir>/diagnostics` so generated files are downloaded with the
+normal run artifacts.
+
+Use `--cluster`, `--mc-hosts`, and `--mc-port` if your project does not use the defaults:
+
+```bash
+inventory control diagnostics-on --cluster workers --mc-hosts mc --mc-port 8080 --auto-off-minutes 60
+```
+
+After the run finishes, diagnostics files, if any were produced, are available under each downloaded worker directory:
+
+```text
+runs/<test>/<timestamp>/<worker>/diagnostics/
+```
+
+### Stack
+
 Check container status:
 
 ```bash
