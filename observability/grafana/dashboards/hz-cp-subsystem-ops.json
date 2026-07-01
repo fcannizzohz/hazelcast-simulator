@@ -1,11 +1,11 @@
 {
-  "title": "HZ CP Subsystem \u2013 Operations",
+  "title": "CP Subsystem Operations",
   "uid": "hz-cp-ops",
   "schemaVersion": 38,
   "version": 1,
-  "refresh": "10s",
+  "refresh": "5s",
   "time": {
-    "from": "now-1h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
@@ -71,7 +71,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## CP Subsystem \u2014 Operations\n\nAn **operations-focused view** of the CP Subsystem designed for on-call engineers and production monitoring. Where the Overview dashboard answers *\"is something wrong?\"*, this dashboard answers *\"what exactly is wrong and how severe is it?\"*\n\n**What problem does this dashboard address?**\nCP structures are used for distributed coordination: locking shared resources, rate-limiting with semaphores, counting with atomic longs. A failure in any of these layers can cause client threads to block indefinitely or coordination logic to break. This dashboard surfaces the operational signals needed to diagnose and respond quickly.\n\n**Insights this dashboard delivers:**\n\n| Section | Key question | What to act on |\n|---------|-------------|----------------|\n| **Cluster & CP Member Health** | How many members are active? Are any missing? | Missing members > 0: check Docker health; Active members < 3: quorum at risk |\n| **Raft Consensus Health** | Is the commit index advancing? Is available log capacity dropping? Which group has degraded quorum? | Commit lag growing: follower falling behind; Log capacity < 1 000: writes will be rejected soon; Member count < 2: group unavailable |\n| **CP Data Structures** | How many instances of each type are live? Is the destroyed count growing? | Rising destroyed count = structures being re-created \u2014 each creation consumes Raft log entries |\n| **Lock & Semaphore Contention** | Is any lock being acquired at an unusually high rate? Are semaphore permits exhausted? | Acquisition rate spike: contention hot spot; Permits = 0: callers are blocking |\n| **CP Sessions** | Are client sessions heartbeating? Is any session close to expiry? | Flat heartbeat version: hung client; Session near TTL: lock/permits will be auto-released |\n\n**How to use the filters:**\n- **Cluster** \u2014 selects the Hazelcast cluster\n- **CP Group** \u2014 restricts Raft-level panels to specific groups (e.g. isolate `group2` for FencedLock issues)\n\n**Severity guide:**\n- \ud83d\udfe2 All stats green, commit rate steady, no missing members \u2192 healthy\n- \ud83d\udfe1 1 missing member, commit lag < 100, semaphore permits > 0 \u2192 degraded but functional\n- \ud83d\udd34 2+ missing members, group member count \u2264 1, log capacity < 500, permits = 0 \u2192 immediate action required\n\n**Drill-down path:** for deeper Raft internals (snapshot index, log fill rate, apply rate) open **HZ CP \u2014 Raft Internals**."
+        "content": "## CP Subsystem \u2014 Operations\n\nAn **operations-focused view** of the CP Subsystem designed for on-call engineers and production monitoring. Where the Overview dashboard answers *\"is something wrong?\"*, this dashboard answers *\"what exactly is wrong and how severe is it?\"*\n\n**What problem does this dashboard address?**\nCP structures are used for distributed coordination: locking shared resources, rate-limiting with semaphores, counting with atomic longs. A failure in any of these layers can cause client threads to block indefinitely or coordination logic to break. This dashboard surfaces the operational signals needed to diagnose and respond quickly.\n\n**Insights this dashboard delivers:**\n\n| Section | Key question | What to act on |\n|---------|-------------|----------------|\n| **Cluster & CP Member Health** | How many members are active? Are any missing? | Missing members > 0: check Docker health; Active members < 3: quorum at risk |\n| **Raft Consensus Health** | Is the commit index advancing? Is available log capacity dropping? Which group has degraded quorum? | Commit lag growing: follower falling behind; Log capacity < 1 000: writes will be rejected soon; Member count < 2: group unavailable |\n| **CP Data Structures** | How many instances of each type are live? Is the destroyed count growing? | Rising destroyed count = structures being re-created \u2014 each creation consumes Raft log entries |\n| **Lock & Semaphore Contention** | Is any lock being acquired at an unusually high rate? Are semaphore permits exhausted? | Acquisition rate spike: contention hot spot; Permits = 0: callers are blocking |\n| **CP Sessions** | Are client sessions heartbeating? Is any session close to expiry? | Flat heartbeat version: hung client; Session near TTL: lock/permits will be auto-released |\n\n**How to use the filters:**\n- **Cluster** \u2014 selects the Hazelcast cluster\n- **CP Group** \u2014 restricts Raft-level panels to specific groups (e.g. isolate `group2` for FencedLock issues)\n\n**Severity guide:**\n- \ud83d\udfe2 All stats green, commit rate steady, no missing members \u2192 healthy\n- \ud83d\udfe1 1 missing member, commit lag < 100, semaphore permits > 0 \u2192 degraded but functional\n- \ud83d\udd34 2+ missing members, group member count \u2264 1, log capacity < 500, permits = 0 \u2192 immediate action required\n\n**Drill-down path:** for deeper Raft internals (snapshot index, log fill rate, apply rate) open **CP Raft Internals**."
       }
     },
     {
@@ -1064,5 +1064,10 @@
         }
       ]
     }
+  ],
+  "tags": [
+    "hazelcast",
+    "cp",
+    "operations"
   ]
 }

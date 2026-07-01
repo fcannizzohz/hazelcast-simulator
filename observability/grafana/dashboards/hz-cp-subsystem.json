@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Operational status of the Hazelcast CP Subsystem \u2013 Raft health, leader elections, commit progress, CP object inventory, and member health. Raft metrics: hz_raft_* (V1). Per-member metrics: hazelcast_* with mc_member label (V2).",
+  "description": "Operational status of the CP Subsystem \u2013 Raft health, leader elections, commit progress, CP object inventory, and member health. Raft metrics: hz_raft_* (V1). Per-member metrics: hazelcast_* with mc_member label (V2).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -35,7 +35,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## CP Subsystem Overview\n\nThe **broadest view** of the Hazelcast CP Subsystem. Start here when you need a quick health check or are investigating an incident without yet knowing which layer is affected.\n\n**What problem does this dashboard address?**\nThe CP Subsystem provides strongly consistent, linearizable data structures backed by the Raft consensus algorithm. When something goes wrong \u2014 client timeouts, blocked operations, or unexpected data \u2014 this dashboard gives you the first layer of answers:\nis the cluster intact, is Raft making progress, and are the data structures in a healthy state?\n\n**Insights this dashboard delivers:**\n\n| Section | Key question | Normal state |\n|---------|-------------|--------------|\n| **Cluster Overview** | Are all 5 CP members active? Any missing? Elections happening? | 5 active, 0 missing, 0 elections |\n| **CP Group Status** | Which member leads each group? Is every group at full quorum? | 3 members/group, stable leader |\n| **Raft Consensus** | Is the Raft log progressing? Is commit lag growing? Is log capacity being exhausted? | Steady commit rate, lag \u2248 0, capacity > 3 000 |\n| **CP Object Inventory** | How many CP structures are live vs destroyed? Is there unexpected churn? | Live count stable, destroyed count = 0 |\n| **CP Map Stats** | Are individual maps growing evenly? Is any map nearing its size limit? | Steady growth, well below 20 MB |\n| **Member Health** | Are any members restarting? Is heap pressure building up? | Uptime monotonic, heap < 80 % |\n\n**How to use the filters:**\n- **Cluster** \u2014 selects the Hazelcast cluster (auto-discovered from Prometheus)\n- **CP Group** \u2014 narrows Raft panels to one or more groups; use *All* for a full picture\n- **Member** \u2014 restricts member-level panels (uptime, heap) to specific nodes\n\n**Drill-down path:** if something looks wrong here, open the focused dashboards:\n\u2192 Raft layer issues: **HZ CP \u2014 Raft Internals**\n\u2192 Group / quorum issues: **HZ CP \u2014 Subsystem Health**\n\u2192 Map-specific issues: **HZ CP \u2014 Map Operations**\n\u2192 Lock / semaphore / session issues: **HZ CP \u2014 Data Structures**"
+        "content": "## CP Subsystem Overview\n\nThe **broadest view** of the CP Subsystem. Start here when you need a quick health check or are investigating an incident without yet knowing which layer is affected.\n\n**What problem does this dashboard address?**\nThe CP Subsystem provides strongly consistent, linearizable data structures backed by the Raft consensus algorithm. When something goes wrong \u2014 client timeouts, blocked operations, or unexpected data \u2014 this dashboard gives you the first layer of answers:\nis the cluster intact, is Raft making progress, and are the data structures in a healthy state?\n\n**Insights this dashboard delivers:**\n\n| Section | Key question | Normal state |\n|---------|-------------|--------------|\n| **Cluster Overview** | Are all 5 CP members active? Any missing? Elections happening? | 5 active, 0 missing, 0 elections |\n| **CP Group Status** | Which member leads each group? Is every group at full quorum? | 3 members/group, stable leader |\n| **Raft Consensus** | Is the Raft log progressing? Is commit lag growing? Is log capacity being exhausted? | Steady commit rate, lag \u2248 0, capacity > 3 000 |\n| **CP Object Inventory** | How many CP structures are live vs destroyed? Is there unexpected churn? | Live count stable, destroyed count = 0 |\n| **CP Map Stats** | Are individual maps growing evenly? Is any map nearing its size limit? | Steady growth, well below 20 MB |\n| **Member Health** | Are any members restarting? Is heap pressure building up? | Uptime monotonic, heap < 80 % |\n\n**How to use the filters:**\n- **Cluster** \u2014 selects the Hazelcast cluster (auto-discovered from Prometheus)\n- **CP Group** \u2014 narrows Raft panels to one or more groups; use *All* for a full picture\n- **Member** \u2014 restricts member-level panels (uptime, heap) to specific nodes\n\n**Drill-down path:** if something looks wrong here, open the focused dashboards:\n\u2192 Raft layer issues: **CP Raft Internals**\n\u2192 Group / quorum issues: **CP Subsystem Health**\n\u2192 Map-specific issues: **CP Map Operations**\n\u2192 Lock / semaphore / session issues: **CP Data Structures**"
       }
     },
     {
@@ -2754,12 +2754,13 @@
     }
   ],
   "preload": false,
-  "refresh": "10s",
+  "refresh": "5s",
   "schemaVersion": 41,
   "tags": [
     "hazelcast",
-    "cp-subsystem",
-    "raft"
+    "cp",
+    "raft",
+    "overview"
   ],
   "templating": {
     "list": [
@@ -2840,12 +2841,12 @@
     ]
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Hazelcast CP Subsystem",
+  "title": "CP Subsystem Overview",
   "uid": "hz-cp-subsystem-v1",
   "version": 24
 }

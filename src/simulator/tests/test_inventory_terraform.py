@@ -102,6 +102,40 @@ class TestInventoryTerraform(unittest.TestCase):
         self.assertIn("dc: dc-b", inventory)
         self.assertIn("region: eu-west-2", inventory)
 
+    def test_import_supports_observability_output_group(self):
+        output = {
+            "observability": {
+                "value": [
+                    {
+                        "public_ip": "203.0.113.40",
+                        "private_ip": "10.0.3.40",
+                        "tags": {
+                            "passthrough:ansible_user": "ubuntu",
+                            "passthrough:dc": "dc-a"
+                        }
+                    }
+                ]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("subprocess.check_output", return_value=json.dumps(output)):
+                current = os.getcwd()
+                try:
+                    os.chdir(tmpdir)
+                    terraform_import("aws")
+                    with open("inventory.yaml") as inventory_file:
+                        inventory = inventory_file.read()
+                finally:
+                    os.chdir(current)
+
+        self.assertIn("observability:", inventory)
+        self.assertIn("203.0.113.40", inventory)
+        self.assertIn("private_ip: 10.0.3.40", inventory)
+        self.assertIn("public_ip: 203.0.113.40", inventory)
+        self.assertIn("ansible_user: ubuntu", inventory)
+        self.assertIn("dc: dc-a", inventory)
+
 
 if __name__ == "__main__":
     unittest.main()

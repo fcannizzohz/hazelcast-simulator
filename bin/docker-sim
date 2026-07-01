@@ -1,0 +1,27 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [[ -z "${PROJECT:-}" ]]; then
+    echo "ERROR: PROJECT is not set" >&2
+    echo "Set it to a Simulator project directory, for example:" >&2
+    echo '  export PROJECT="$(pwd)/simulator-projects/<project>"' >&2
+    exit 1
+fi
+
+SIM_IMAGE="${SIM_IMAGE:-hazelcast/simulator:latest}"
+
+DOCKER_ARGS=(
+    run --rm -it
+    -v "$PROJECT:/workspace"
+    -v "$(pwd)/mvnrepo:/root/.m2"
+    -v ~/.aws:/root/.aws
+)
+
+if [[ -n "${HZ_LICENSEKEY:-}" ]]; then
+    DOCKER_ARGS+=(-e HZ_LICENSEKEY)
+fi
+
+DOCKER_ARGS+=("$SIM_IMAGE" "$@")
+
+docker "${DOCKER_ARGS[@]}"

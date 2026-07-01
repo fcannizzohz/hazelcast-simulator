@@ -2,7 +2,7 @@
 # - it only backs the hazelcast5-multidc-ec2 template
 # - it keeps the simulator-facing inventory flat (nodes/loadgenerators/mc)
 # - it supports up to two AWS regions
-# - operator access is public (SSH/MC), while cluster traffic stays on private IPs
+# - operator access is public (SSH/MC/Grafana/Prometheus), while cluster traffic stays on private IPs
 #
 # The user-facing topology comes from inventory_plan.yaml as a list of DCs. Each
 # DC contributes a subnet/AZ placement and per-role counts, but the simulator
@@ -21,8 +21,9 @@ locals {
   region_names = distinct([
     for dc in local.dcs : dc.region
   ])
-  requested_primary_dc = try(local.dcs_by_name[local.settings.primary_dc], null)
-  requested_mc_dc      = try(local.dcs_by_name[local.settings.mc_dc], null)
+  requested_primary_dc       = try(local.dcs_by_name[local.settings.primary_dc], null)
+  requested_mc_dc            = try(local.dcs_by_name[local.settings.mc_dc], null)
+  requested_observability_dc = try(local.dcs_by_name[local.settings.observability_dc], null)
 
   # primary_dc is the user-facing anchor for the managed topology. When it is
   # valid, its region defines the default provider and the primary side of any
@@ -186,13 +187,45 @@ locals {
     }
   ]
 
+  observability_ingress_rules = [
+    {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Grafana"
+      from_port   = 3000
+      to_port     = 3000
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Prometheus"
+      from_port   = 9090
+      to_port     = 9090
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "ICMP"
+      from_port   = -1
+      to_port     = -1
+      protocol    = "icmp"
+      cidr_blocks = local.dc_cidrs
+    }
+  ]
+
   mc_bootstrap_commands = [
-    "wget -q https://repository.hazelcast.com/download/management-center/hazelcast-management-center-5.0.tar.gz",
-    "tar -xzvf hazelcast-management-center-5.0.tar.gz",
+    "wget -q https://repository.hazelcast.com/download/management-center/hazelcast-management-center-5.11.0.tar.gz",
+    "tar -xzvf hazelcast-management-center-5.11.0.tar.gz",
     "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 1; done",
     "sudo apt-get -y update",
-    "sudo apt-get -y install openjdk-11-jdk",
-    "nohup hazelcast-management-center-5.0/bin/start.sh  > mc.out 2>&1 &",
+    "sudo apt-get -y install openjdk-21-jdk",
+    "export JAVA_OPTS='-Dhazelcast.mc.prometheusExporter.enabled=true -Dhazelcast.mc.prometheusExporter.timestamp.enabled=false -Dhazelcast.mc.prometheusExporter.printers=V1'",
+    "nohup hazelcast-management-center-5.11.0/bin/start.sh  > mc.out 2>&1 &",
     "sleep 2"
   ]
 
@@ -247,6 +280,23 @@ locals {
     ],
   )
 
+  observability_output_hosts = concat(
+    [
+      for instance in values(aws_instance.primary_observability) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+    [
+      for instance in values(aws_instance.secondary_observability) : {
+        public_ip  = instance.public_ip
+        private_ip = instance.private_ip
+        tags       = instance.tags
+      }
+    ],
+  )
+
   # Expand the per-DC counts into concrete instance descriptors. These locals
   # are later turned into for_each maps for the actual EC2 instances.
   primary_node_instances = flatten([
@@ -291,18 +341,27 @@ locals {
   ]
   primary_mc_instances   = local.requested_mc_dc != null && local.requested_mc_dc.region == local.primary_region ? local.mc_instances : []
   secondary_mc_instances = local.requested_mc_dc != null && local.has_secondary_region && local.requested_mc_dc.region == local.secondary_region ? local.mc_instances : []
+
+  observability_instances = local.requested_observability_dc == null ? [] : [
+    for index in range(try(local.settings.observability.count, 0)) : {
+      key = "observability-${index}"
+      dc  = local.requested_observability_dc
+    }
+  ]
+  primary_observability_instances   = local.requested_observability_dc != null && local.requested_observability_dc.region == local.primary_region ? local.observability_instances : []
+  secondary_observability_instances = local.requested_observability_dc != null && local.has_secondary_region && local.requested_observability_dc.region == local.secondary_region ? local.observability_instances : []
 }
 
 # The default provider targets the first region seen in dcs; a second aliased
 # provider is used only when the plan spans a second region.
 provider "aws" {
-  profile = "default"
+  profile = try(local.settings.aws_profile, null)
   region  = local.primary_region
 }
 
 provider "aws" {
   alias   = "secondary"
-  profile = "default"
+  profile = try(local.settings.aws_profile, null)
   region  = local.secondary_region
 }
 
@@ -384,6 +443,11 @@ resource "aws_key_pair" "keypair" {
     precondition {
       condition     = local.requested_mc_dc != null
       error_message = "mc_dc must match one of the names declared in dcs."
+    }
+
+    precondition {
+      condition     = local.requested_observability_dc != null
+      error_message = "observability_dc must match one of the names declared in dcs."
     }
 
     precondition {
@@ -689,6 +753,64 @@ resource "aws_security_group" "secondary_mc_sg" {
   }
 }
 
+resource "aws_security_group" "primary_observability_sg" {
+  name        = "simulator-security-group-observability-${local.settings.basename}-${replace(local.primary_region, "-", "_")}"
+  description = "Security group for simulator observability"
+  vpc_id      = local.primary_vpc_id
+
+  tags = merge({
+    Name = "Simulator Observability Security Group ${local.settings.basename} ${local.primary_region}"
+  }, local.common_resource_tags)
+
+  dynamic "ingress" {
+    for_each = local.observability_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "secondary_observability_sg" {
+  provider    = aws.secondary
+  count       = local.has_secondary_region ? 1 : 0
+  name        = "simulator-security-group-observability-${local.settings.basename}-${replace(local.secondary_region, "-", "_")}"
+  description = "Security group for simulator observability"
+  vpc_id      = local.secondary_vpc_id
+
+  tags = merge({
+    Name = "Simulator Observability Security Group ${local.settings.basename} ${local.secondary_region}"
+  }, local.common_resource_tags)
+
+  dynamic "ingress" {
+    for_each = local.observability_ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 # Instance resources are also split by region to match the bounded provider
 # model. Per-DC AMI overrides are optional; when absent, top-level role AMIs are
 # used. Tags prefixed with passthrough: are copied into inventory.yaml later.
@@ -838,6 +960,47 @@ resource "aws_instance" "secondary_mc" {
   }
 }
 
+resource "aws_instance" "primary_observability" {
+  for_each               = { for item in local.primary_observability_instances : item.key => item }
+  key_name               = aws_key_pair.keypair.key_name
+  ami                    = try(each.value.dc.observability.ami, local.settings.observability.ami)
+  instance_type          = local.settings.observability.instance_type
+  availability_zone      = each.value.dc.availability_zone
+  subnet_id              = aws_subnet.primary_dc_subnet[each.value.dc.name].id
+  vpc_security_group_ids = [aws_security_group.primary_observability_sg.id]
+  tenancy                = local.settings.observability.tenancy
+
+  tags = merge({
+    Name                                       = "Simulator Observability ${local.settings.basename} ${each.value.dc.name}"
+    "passthrough:ansible_ssh_private_key_file" = local.settings.keypair.private_key
+    "passthrough:ansible_user"                 = local.settings.observability.user
+    "passthrough:dc"                           = each.value.dc.name
+    "passthrough:region"                       = each.value.dc.region
+    "passthrough:availability_zone"            = each.value.dc.availability_zone
+  }, local.common_resource_tags)
+}
+
+resource "aws_instance" "secondary_observability" {
+  provider               = aws.secondary
+  for_each               = { for item in local.secondary_observability_instances : item.key => item }
+  key_name               = aws_key_pair.secondary_keypair[0].key_name
+  ami                    = try(each.value.dc.observability.ami, local.settings.observability.ami)
+  instance_type          = local.settings.observability.instance_type
+  availability_zone      = each.value.dc.availability_zone
+  subnet_id              = aws_subnet.secondary_dc_subnet[each.value.dc.name].id
+  vpc_security_group_ids = [aws_security_group.secondary_observability_sg[0].id]
+  tenancy                = local.settings.observability.tenancy
+
+  tags = merge({
+    Name                                       = "Simulator Observability ${local.settings.basename} ${each.value.dc.name}"
+    "passthrough:ansible_ssh_private_key_file" = local.settings.keypair.private_key
+    "passthrough:ansible_user"                 = local.settings.observability.user
+    "passthrough:dc"                           = each.value.dc.name
+    "passthrough:region"                       = each.value.dc.region
+    "passthrough:availability_zone"            = each.value.dc.availability_zone
+  }, local.common_resource_tags)
+}
+
 # Outputs deliberately stay flat even though provisioning is multi-DC. That
 # keeps backward compatibility with the simulator inventory importer and the
 # rest of the runtime, which already understands nodes/loadgenerators/mc.
@@ -851,4 +1014,8 @@ output "loadgenerators" {
 
 output "mc" {
   value = local.mc_output_hosts
+}
+
+output "observability" {
+  value = local.observability_output_hosts
 }

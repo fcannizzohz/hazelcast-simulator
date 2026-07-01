@@ -13,6 +13,7 @@ extraTags: {}
 # The primary DC is used for shared resources such as Management Center by default.
 primary_dc: dc-a
 mc_dc: dc-a
+observability_dc: dc-a
 
 keypair:
     public_key: key.pub
@@ -37,6 +38,13 @@ mc:
     user: ubuntu
     tenancy: null
 
+observability:
+    instance_type: c5d.xlarge
+    count: 0
+    ami: ami-03ceeb33c1e4abcd1
+    user: ubuntu
+    tenancy: null
+
 dcs:
     - name: dc-a
       region: eu-west-2
@@ -56,6 +64,9 @@ dcs:
       # Optional MC override for this DC when mc_dc points here.
       # mc:
       #     ami: ami-03ceeb33c1e4abcd1
+      # Optional observability override for this DC when observability_dc points here.
+      # observability:
+      #     ami: ami-03ceeb33c1e4abcd1
 
     - name: dc-b
       region: eu-west-2
@@ -71,4 +82,6 @@ dcs:
           count: 1
           # ami: ami-03ceeb33c1e4abcd1
       # mc:
+      #     ami: ami-03ceeb33c1e4abcd1
+      # observability:
       #     ami: ami-03ceeb33c1e4abcd1

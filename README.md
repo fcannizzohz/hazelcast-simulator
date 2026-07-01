@@ -294,11 +294,27 @@ Then provision the environment and install the stack:
    inventory install observability
    ```
 
-The install command fails before making remote changes if the `mc` group is missing or empty. When installation
-completes, open:
+The install command fails before making remote changes if the `mc` group is missing or empty. It also configures
+Management Center to connect to the `nodes` group as cluster `workers` and restarts MC before starting Prometheus.
+Use `--member-hosts`, `--member-port`, or `--cluster-name` if your project uses different member placement or
+cluster settings.
+
+If `HZ_LICENSEKEY` is present in the environment, the MC restart also sets `hazelcast.mc.license` so Enterprise
+MC features such as the Prometheus exporter can start with the license already installed. The license is read from
+the environment by Ansible rather than passed on the Ansible command line. MC receives it through both `MC_LICENSE`
+and `-Dhazelcast.mc.license=...`; the latter can be visible in the MC JVM process arguments on the remote host while
+MC is running.
+
+When reconfiguring MC, the installer stops the existing MC process and removes a stale `~/hazelcast-mc/mc.lock`
+file if one was left by the previous process. The installer sets `MC_HOME=~/hazelcast-mc` for both `hz-mc conf`
+and the restarted MC process so the configured cluster connection is read by the running MC instance.
+
+When installation completes, open:
 
 * Grafana: `http://<observability-public-ip>:3000`
 * Prometheus: `http://<observability-public-ip>:9090`
+
+The install command prints the Management Center, Grafana, and Prometheus endpoints at the end of a successful run.
 
 To operate the stack from the benchmark directory:
 
@@ -598,7 +614,7 @@ should be conducted in.
 | `loadgenerator_hosts`                  | `loadgenerators` | Defines the host for Clients, based on either `loadgenerators` or `nodes`, allowing both separate and mixed client/member setups            |
 | `node_hosts`                           | `nodes`          | Defines the host for Members - this should generally always be `nodes`, and only `loadgenerator_hosts` should be changed for mixed testing. |
 | `driver`                               | `hazelcast5`     | The Hazelcast Driver to use - for 5.0+ testing, this is either `hazelcast5` or `hazelcast-enterprise5` for OS or EE respectively            |
-| `version`                              | `maven=5.1`      | The Hazelcast version to use - typically provided by maven, i.e. `maven=5.3.0-SNAPSHOT`                                                     |
+| `version`                              | `maven=5.1`      | The Hazelcast version to use - typically provided by maven, i.e. `maven=5.7.0`                                                     |
 | `client_args`                          | `-Xms3g -Xmx3g`  | The command-line Java parameters passed to all clients in this test suite                                                                   |
 | `member_args`                          | `-Xms3g -Xmx3g`  | The command-line Java parameters passed to all members in this test suite                                                                   |
 | `performance_monitor_interval_seconds` | `1`              | The interval of the Simulator performance monitor                                                                                           |

@@ -1,76 +1,216 @@
 # Multi-DC Test Runbook
 
-Run these commands from the repository root.
+Run these commands from the repository root. The scenarios use Hazelcast
+Enterprise, Management Center, and the optional Prometheus/Grafana observability
+host where the selected template supports it.
 
-This runbook assumes your test projects live under:
-
-```bash
-./simulator-projects
-```
-
-To reuse Maven artifacts across all scenarios, it also assumes a shared local Maven cache directory:
+Set the shared paths once. `./bin/docker-sim` defaults `SIM_IMAGE` to
+`hazelcast/simulator:latest`, so setting `SIM_IMAGE` is optional unless you want
+to use a local image.
 
 ```bash
-./mvnrepo
+mkdir -p ./simulator-projects ./mvnrepo
+export SIM_IMAGE="${SIM_IMAGE:-hazelcast/simulator:latest}"
 ```
 
-Set the simulator image once before running the commands:
+## Build Local Docker Image
+
+Use a local image when `hazelcast/simulator:latest` does not yet contain the
+multi-DC, control, and observability changes from this checkout.
+
+Build the image from the repository root:
 
 ```bash
-export SIM_IMAGE=hazelcast/simulator:latest
+docker build -t hazelcast/simulator:local .
 ```
 
-This runbook gives you three manual smoke-test scenarios:
+Then point the runbook commands at the local image:
+
+```bash
+export SIM_IMAGE=hazelcast/simulator:local
+```
+
+Verify the image exposes the expected CLIs:
+
+```bash
+docker run --rm -it -v "$(pwd):/workspace" "$SIM_IMAGE" perftest --help
+docker run --rm -it -v "$(pwd):/workspace" "$SIM_IMAGE" inventory --help
+```
+
+## Scope
+
+This runbook covers five manual scenarios:
 
 1. `hazelcast5-ec2` regression test with a normal single-DC setup
 2. `hazelcast5-multidc-ec2` single-region multi-DC with 3 members over 2 AZs
 3. `hazelcast5-multidc-ec2` two-region multi-DC with 3 members, one in each AZ
+4. `hazelcast5-multidc-ec2` node failover during a 10 minute Enterprise test
+5. `hazelcast5-multidc-ec2` single-region 3-AZ DC failover with a 2/2/1 deployment
 
-Each scenario uses the 5 minute smoke test from
-[smoke-tests.yaml](./smoke-tests.yaml).
+The first three scenarios use the 5 minute Enterprise smoke test from
+[smoke-tests.yaml](./smoke-tests.yaml). The failover scenarios use
+[enterprise-failover-10m-tests.yaml](./enterprise-failover-10m-tests.yaml).
 
-## Common prerequisites
+## Create Simulator Projects
 
-- AWS credentials available in `~/.aws` for the managed scenarios
-- a valid Ubuntu AMI in each target region
-- Docker installed locally
-- working `key` and `key.pub` in the created project directory
-- a shared Maven cache directory at `./mvnrepo`
+Each scenario starts by creating a Simulator project with `perftest create`,
+then copying in the scenario-specific `inventory_plan.yaml` and `tests.yaml`.
+The `perftest create` command generates the project directory and its `key` /
+`key.pub` pair under `./simulator-projects`.
 
-Create the shared project and Maven directories once:
+Because these scenarios use Hazelcast Enterprise, set the license key before
+replacing the placeholder in the copied `tests.yaml`:
 
 ```bash
-mkdir -p ./simulator-projects ./mvnrepo
+export HZ_LICENSEKEY='<your Hazelcast Enterprise license key>'
+export PROJECT="$(pwd)/simulator-projects/<project>"
+python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
-Managed scenarios provision:
-- 3 Hazelcast members total
+`./bin/docker-sim` forwards `HZ_LICENSEKEY` into the Simulator container when it
+is set. During `inventory install observability`, the same value is applied to
+Management Center through `MC_LICENSE` and `-Dhazelcast.mc.license` before MC is
+restarted. The value is not passed on the local Ansible command line, but the
+Java system property can be visible in the MC JVM process arguments on the
+remote host while MC is running.
+
+Before provisioning a managed AWS scenario, make sure AWS credentials are
+available in `~/.aws` and that the copied `inventory_plan.yaml` contains valid
+AMI, VPC, Internet Gateway, region, and AZ values.
+
+Managed scenarios provision at least:
+
+- Hazelcast members
 - 1 load generator
-- 1 Management Center
+- 1 Management Center host
+- 1 observability host with Grafana on port `3000` and Prometheus on port `9090`
 
-The provided managed examples use these small smoke-test sizes by default:
-- nodes: `t3.medium`
-- loadgenerators: `t3.small`
-- mc: `t3.small`
+The observability installer requires the `mc` group. If the plan has `mc.count:
+0` or no `mc` group in `inventory.yaml`, `inventory install observability` should
+fail with a clear message instead of producing a partial install.
 
-The regression single-DC example is different:
-- nodes: `c5.large`
-- loadgenerators: `c5.large`
-- mc: `t3.small`
+## Helper Commands
 
-That regression path uses the older `hazelcast5-ec2` template, which still launches members and load generators in a `cluster` placement group. AWS does not support burstable `t*` instances in cluster placement groups, so the regression example intentionally stays on small `c5` sizes.
+Print AWS values to copy into `inventory_plan.yaml` for one or more regions:
 
-## Smoke test workflow
+```bash
+./bin/aws_inventory_values --team Cloud eu-west-2 eu-central-1
+```
 
-For all scenarios, the smoke test workflow is:
-- prepare the project files locally
-- provision infrastructure only for managed scenarios
-- install Java
-- install Simulator
-- tune the environment
-- verify remote reachability
-- copy in the 5 minute smoke test
-- run `perftest run`
+Include recent Ubuntu AMI candidates for each region:
+
+```bash
+./bin/aws_inventory_values --team Cloud --images eu-west-2 eu-central-1
+```
+
+Use the output as:
+
+```yaml
+region: <region>
+availability_zone: <one availability_zone>
+ami: <ami>
+vpc_id: <vpc_id>
+internet_gateway_id: <internet_gateway_id>
+cidr_block: <unused /24 inside the VPC CIDR>
+team: <team>
+```
+
+Set `PROJECT` to the current project directory before using these helpers:
+
+```bash
+export PROJECT="$(pwd)/simulator-projects/<project>"
+```
+
+Then run Simulator commands through the Docker wrapper:
+
+```bash
+./bin/docker-sim inventory apply
+```
+
+Install and verify a provisioned project:
+
+```bash
+./bin/docker-sim inventory apply
+./bin/docker-sim inventory install java
+./bin/docker-sim inventory install simulator
+./bin/docker-sim inventory install observability
+./bin/docker-sim inventory tune
+./bin/docker-sim inventory shell --ping --hosts all
+./bin/docker-sim inventory control probe --hosts nodes
+```
+
+`inventory install observability` preconfigures MC to connect to the `nodes`
+group as cluster `workers`, restarts MC, then starts Prometheus and Grafana. It
+also sets `MC_HOME=~/hazelcast-mc` for both `hz-mc conf` and the restarted MC
+process, and removes a stale `~/hazelcast-mc/mc.lock` before running `hz-mc
+conf`, so rerunning the installer can update MC after an earlier MC process was
+stopped.
+If you change the cluster name or member port, pass the matching values:
+
+```bash
+./bin/docker-sim inventory install observability --member-hosts nodes --member-port 5701 --cluster-name workers
+```
+
+Print the MC, Grafana, and Prometheus URLs:
+
+```bash
+./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); mc=next(iter(inv["mc"]["hosts"])); obs=next(iter(inv["observability"]["hosts"])); print(f"MC: http://{mc}:8080"); print(f"Grafana: http://{obs}:3000"); print(f"Prometheus: http://{obs}:9090")'
+```
+
+`inventory install observability` also prints these endpoints at the end of a
+successful install.
+
+**Important**: MC is preconfigured during install, but it only connects while the
+Hazelcast members are actually running. If you only did inventory apply/install
+but have not started a test yet, the cluster may not exist yet.
+
+
+Tail the observability stack:
+
+```bash
+./bin/docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose ps || sudo docker-compose ps)"
+./bin/docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose logs --tail=100 || sudo docker-compose logs --tail=100)"
+```
+
+Run a test and inspect the generated report:
+
+```bash
+./bin/docker-sim perftest run
+./bin/docker-sim sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); echo "$LATEST_RUN"; find "$LATEST_RUN/report" -maxdepth 2 -type f | sort'
+```
+
+Destroy a project:
+
+```bash
+./bin/docker-sim inventory destroy
+```
+
+If `inventory apply` fails with duplicate key pair, placement group, or security
+group names, AWS already has resources for the same project `basename` and VPC
+that are not fully tracked by the current Terraform state. Either destroy the
+previous project from the directory that still has its `aws/terraform.tfstate`,
+use a new unique `basename` in `inventory_plan.yaml`, or run the manual cleanup
+helper:
+
+```bash
+./bin/aws_cleanup_project "$PROJECT"
+```
+
+Preview the AWS commands without deleting anything:
+
+```bash
+./bin/aws_cleanup_project --dry-run "$PROJECT"
+```
+
+If `inventory apply` fails with `InvalidSubnet.Conflict`, the configured
+`cidr_block` already overlaps an existing subnet in the target VPC. Re-run:
+
+```bash
+./bin/aws_inventory_values --team Cloud eu-west-2
+```
+
+Then pick an unused `/24` inside the printed VPC CIDR and update
+`cidr_block` before applying again.
 
 ## Scenario 1: Regression single-DC
 
@@ -80,38 +220,27 @@ Create the project:
 docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-ec2 regression-single-dc
 cp ./examples/multi-dc/regression-single-dc-3nodes.inventory_plan.yaml ./simulator-projects/regression-single-dc/inventory_plan.yaml
 cp ./examples/multi-dc/smoke-tests.yaml ./simulator-projects/regression-single-dc/tests.yaml
+export PROJECT="$(pwd)/simulator-projects/regression-single-dc"
+python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
-The `inventory_plan.yaml` copy is optional. It is only there to give you a known 3-node regression baseline that matches the other smoke-test examples. You can skip that copy and edit the generated plan manually instead.
+Fill in real values for `basename`, `owner`, `region`, `availability_zone`,
+`vpc_id`, `internet_gateway_id`, and role AMIs in `inventory_plan.yaml`.
 
-Fill in your real values in [inventory_plan.yaml](../../simulator-projects/regression-single-dc/inventory_plan.yaml):
-- `basename`
-- `owner`
-- `region`
-- `availability_zone`
-- `vpc_id`
-- `internet_gateway_id`
-- `ami`
-
-Provision and run:
+Provision, install, observe, run, and destroy:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory apply
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'cat inventory.yaml'
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory install java
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory install simulator
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory tune
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory shell --ping --hosts all
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest run
+./bin/docker-sim inventory apply
+./bin/docker-sim sh -lc 'cat inventory.yaml'
+# Run the helper commands: install and verify, print URLs, run the test, destroy.
 ```
 
-Destroy:
+The regression path uses the older `hazelcast5-ec2` template, which still
+launches members and load generators in a `cluster` placement group. AWS does not
+support burstable `t*` instances in cluster placement groups, so this example
+uses small `c5` sizes for members and load generators.
 
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/regression-single-dc:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory destroy
-```
-
-## Scenario 2: Single-region multi-DC over 2 AZs
+## Scenario 2: Single-Region Multi-DC Over 2 AZs
 
 Create the project:
 
@@ -119,38 +248,25 @@ Create the project:
 docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-single-region
 cp ./examples/multi-dc/managed-single-region-2az-3nodes.inventory_plan.yaml ./simulator-projects/multidc-single-region/inventory_plan.yaml
 cp ./examples/multi-dc/smoke-tests.yaml ./simulator-projects/multidc-single-region/tests.yaml
+export PROJECT="$(pwd)/simulator-projects/multidc-single-region"
+python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
-Fill in your real values in [inventory_plan.yaml](../../simulator-projects/multidc-single-region/inventory_plan.yaml):
-- `basename`
-- `owner`
-- `ami`
-- `vpc_id`
-- `internet_gateway_id`
+Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
+`internet_gateway_id`. This example spreads 3 members as:
 
-This example spreads 3 members as:
 - `dc-a`: 2 members in `eu-west-2a`
 - `dc-b`: 1 member in `eu-west-2b`
 
-Provision and run:
+Provision, install, observe, run, and destroy:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory apply
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'cat inventory.yaml'
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory install java
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory install simulator
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory tune
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory shell --ping --hosts all
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest run
+./bin/docker-sim inventory apply
+./bin/docker-sim sh -lc 'cat inventory.yaml'
+# Run the helper commands: install and verify, print URLs, run the test, destroy.
 ```
 
-Destroy:
-
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory destroy
-```
-
-## Scenario 3: Two-region multi-DC
+## Scenario 3: Two-Region Multi-DC
 
 Create the project:
 
@@ -158,104 +274,121 @@ Create the project:
 docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-two-region
 cp ./examples/multi-dc/managed-two-region-3nodes.inventory_plan.yaml ./simulator-projects/multidc-two-region/inventory_plan.yaml
 cp ./examples/multi-dc/smoke-tests.yaml ./simulator-projects/multidc-two-region/tests.yaml
+export PROJECT="$(pwd)/simulator-projects/multidc-two-region"
+python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
-Fill in your real values in [inventory_plan.yaml](../../simulator-projects/multidc-two-region/inventory_plan.yaml):
-- `basename`
-- `owner`
-- region-specific `ami` values if needed
-- the `vpc_id` and `internet_gateway_id` for each region
+Fill in real values for `basename`, `owner`, region-specific AMIs if needed, and
+the `vpc_id` and `internet_gateway_id` for each region. This example spreads 3
+members as:
 
-If your AMI IDs differ by region, add per-DC overrides under `dcs[*].nodes.ami`, `dcs[*].loadgenerators.ami`, and `dcs[*].mc.ami` while keeping the top-level role AMIs as defaults.
-
-This example spreads 3 members as:
 - `dc-a`: 1 member in `eu-west-2a`
 - `dc-b`: 1 member in `eu-west-2b`
 - `dc-c`: 1 member in `eu-central-1a`
 
-Like the single-region example, the load generator and MC stay in `dc-a` so the only real change is that the third member moves to a second region.
+The load generator, MC, and observability host stay in `dc-a`.
 
-Provision and run:
-
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory apply
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'cat inventory.yaml'
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory install java
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory install simulator
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory tune
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory shell --ping --hosts all
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest run
-```
-
-Destroy:
+Provision, install, observe, run, and destroy:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" -v ~/.aws:/root/.aws "$SIM_IMAGE" inventory destroy
+./bin/docker-sim inventory apply
+./bin/docker-sim sh -lc 'cat inventory.yaml'
+# Run the helper commands: install and verify, print URLs, run the test, destroy.
 ```
 
-## Access Management Center
+## Scenario 4: Node Failover During a 10 Minute Test
 
-For the managed scenarios, MC is provisioned in the `mc` group and exposed on port `8080`.
-
-Print the MC URL for the single-region project:
+Create a 5-member single-region 3-AZ project:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" python3 -c 'import yaml; inventory=yaml.safe_load(open("inventory.yaml")); host=next(iter(inventory["mc"]["hosts"])); print(f"http://{host}:8080")'
+docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-node-failover
+cp ./examples/multi-dc/managed-single-region-3az-5nodes.inventory_plan.yaml ./simulator-projects/multidc-node-failover/inventory_plan.yaml
+cp ./examples/multi-dc/enterprise-failover-10m-tests.yaml ./simulator-projects/multidc-node-failover/tests.yaml
+export PROJECT="$(pwd)/simulator-projects/multidc-node-failover"
+python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
-Print the MC URL for the two-region project:
+Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
+`internet_gateway_id`. The deployment uses 2 members in `dc-a`, 2 members in
+`dc-b`, and 1 member in `dc-c`.
+
+Provision and install with the helper commands. Then choose one member host from
+`dc-b`:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" python3 -c 'import yaml; inventory=yaml.safe_load(open("inventory.yaml")); host=next(iter(inventory["mc"]["hosts"])); print(f"http://{host}:8080")'
+export FAILOVER_HOST=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(next(host for host,data in hosts.items() if data.get("passthrough:dc") == "dc-b"))')
+echo "$FAILOVER_HOST"
 ```
 
-Tail MC logs for the single-region project:
+Start the 10 minute test in one terminal:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory shell --hosts mc "tail -n 200 mc.out"
+./bin/docker-sim perftest run
 ```
 
-Tail MC logs for the two-region project:
+After the test has been running for at least 60 seconds, restart the selected
+member from another terminal:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" inventory shell --hosts mc "tail -n 200 mc.out"
+./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOST"
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --dry-run
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --yes
 ```
 
-## Retrieve reports and logs
+The expected result is a completed run with a visible temporary member loss in
+MC and Prometheus/Grafana, followed by the member returning before the run ends.
+
+## Scenario 5: Single-Region 3-AZ DC Failover
+
+Create the project:
+
+```bash
+docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-3az-dc-failover
+cp ./examples/multi-dc/managed-single-region-3az-5nodes.inventory_plan.yaml ./simulator-projects/multidc-3az-dc-failover/inventory_plan.yaml
+cp ./examples/multi-dc/enterprise-failover-10m-tests.yaml ./simulator-projects/multidc-3az-dc-failover/tests.yaml
+export PROJECT="$(pwd)/simulator-projects/multidc-3az-dc-failover"
+python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+```
+
+Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
+`internet_gateway_id`, then provision and install with the helper commands.
+
+This scenario fails the singleton DC in the 2/2/1 layout:
+
+- `dc-a`: 2 members in AZ A with the load generator, MC, and observability host
+- `dc-b`: 2 members in AZ B
+- `dc-c`: 1 member in AZ C
+
+Choose all member hosts in `dc-c`:
+
+```bash
+export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("passthrough:dc") == "dc-c"))')
+echo "$FAILOVER_HOSTS"
+```
+
+Start the 10 minute test in one terminal:
+
+```bash
+./bin/docker-sim perftest run
+```
+
+After the test has been running for at least 60 seconds, restart the `dc-c`
+member from another terminal:
+
+```bash
+./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOSTS"
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --dry-run
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --yes
+```
+
+The expected result is a completed run where the cluster survives the temporary
+loss of the one-member DC and converges after `dc-c` rejoins.
+
+## Reports And Logs
 
 `perftest run` automatically downloads worker data and generates a local report.
-
-Find the latest run directory for the single-region project:
-
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); echo "$LATEST_RUN"'
-```
-
-List report files for the single-region project:
-
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); find "$LATEST_RUN/report" -maxdepth 2 -type f | sort'
-```
-
-List downloaded worker files for the single-region project:
-
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); find "$LATEST_RUN" -maxdepth 4 -type f | sort | tail -n 50'
-```
-
-Regenerate the report for the single-region project:
-
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-single-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); perftest report -o "$LATEST_RUN/report" "$LATEST_RUN"'
-```
-
-Do the same for the two-region project:
-
-```bash
-docker run --rm -it -v "$(pwd)/simulator-projects/multidc-two-region:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); echo "$LATEST_RUN"; find "$LATEST_RUN/report" -maxdepth 2 -type f | sort; find "$LATEST_RUN" -maxdepth 4 -type f | sort | tail -n 50'
-```
-
 The most useful artifacts are usually:
+
 - `runs/<test>/<timestamp>/report/index.html`
 - `runs/<test>/<timestamp>/report/report.csv`
 - `runs/<test>/<timestamp>/results.yaml`
@@ -297,10 +430,12 @@ aws ec2 describe-images \
 Then search for the same image family in `eu-central-1` by owner and name pattern:
 
 ```bash
+export AMI_OWNER_ID=099720109477
+export IMAGE_NAME_PATTERN='ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*'
 aws ec2 describe-images \
   --region eu-central-1 \
-  --owners <OWNER_ID> \
-  --filters "Name=name,Values=<IMAGE_NAME_OR_PATTERN>" "Name=state,Values=available" \
+  --owners "$AMI_OWNER_ID" \
+  --filters "Name=name,Values=$IMAGE_NAME_PATTERN" "Name=state,Values=available" \
   --query 'sort_by(Images,&CreationDate)[-10:].{ImageId:ImageId,Name:Name,Created:CreationDate}' \
   --output table
 ```
@@ -341,9 +476,10 @@ aws ec2 describe-vpcs \
 Show the Internet Gateway attached to one VPC:
 
 ```bash
+export VPC_ID=vpc-...
 aws ec2 describe-internet-gateways \
   --region eu-central-1 \
-  --filters Name=attachment.vpc-id,Values=<VPC_ID> \
+  --filters Name=attachment.vpc-id,Values="$VPC_ID" \
   --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
   --output table
 ```
@@ -362,7 +498,7 @@ Show existing subnets in one VPC so you can choose a free subnet CIDR:
 ```bash
 aws ec2 describe-subnets \
   --region eu-central-1 \
-  --filters Name=vpc-id,Values=<VPC_ID> \
+  --filters Name=vpc-id,Values="$VPC_ID" \
   --query 'Subnets[].{SubnetId:SubnetId,Az:AvailabilityZone,Cidr:CidrBlock,Name:Tags[?Key==`Name`]|[0].Value}' \
   --output table
 ```
@@ -381,13 +517,19 @@ aws ec2 create-vpc \
   --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=simulator-multidc-eu-central-1}]'
 ```
 
+Set `VPC_ID` from the `Vpc.VpcId` value in the output:
+
+```bash
+export VPC_ID=vpc-...
+```
+
 Enable DNS support:
 
 ```bash
 aws ec2 modify-vpc-attribute \
   --region eu-central-1 \
-  --vpc-id <VPC_ID> \
-  --enable-dns-support
+  --vpc-id "$VPC_ID" \
+  --enable-dns-support '{"Value":true}'
 ```
 
 Enable DNS hostnames:
@@ -395,8 +537,8 @@ Enable DNS hostnames:
 ```bash
 aws ec2 modify-vpc-attribute \
   --region eu-central-1 \
-  --vpc-id <VPC_ID> \
-  --enable-dns-hostnames
+  --vpc-id "$VPC_ID" \
+  --enable-dns-hostnames '{"Value":true}'
 ```
 
 Create the Internet Gateway:
@@ -407,13 +549,19 @@ aws ec2 create-internet-gateway \
   --tag-specifications 'ResourceType=internet-gateway,Tags=[{Key=Name,Value=simulator-multidc-eu-central-1-igw}]'
 ```
 
+Set `IGW_ID` from the `InternetGateway.InternetGatewayId` value in the output:
+
+```bash
+export IGW_ID=igw-...
+```
+
 Attach it to the VPC:
 
 ```bash
 aws ec2 attach-internet-gateway \
   --region eu-central-1 \
-  --internet-gateway-id <IGW_ID> \
-  --vpc-id <VPC_ID>
+  --internet-gateway-id "$IGW_ID" \
+  --vpc-id "$VPC_ID"
 ```
 
 Verify the VPC:
@@ -421,7 +569,7 @@ Verify the VPC:
 ```bash
 aws ec2 describe-vpcs \
   --region eu-central-1 \
-  --vpc-ids <VPC_ID> \
+  --vpc-ids "$VPC_ID" \
   --query 'Vpcs[].{VpcId:VpcId,Cidr:CidrBlock,Name:Tags[?Key==`Name`]|[0].Value}' \
   --output table
 ```
@@ -431,7 +579,7 @@ Verify the Internet Gateway attachment:
 ```bash
 aws ec2 describe-internet-gateways \
   --region eu-central-1 \
-  --internet-gateway-ids <IGW_ID> \
+  --internet-gateway-ids "$IGW_ID" \
   --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
   --output table
 ```
@@ -470,8 +618,8 @@ Set the values first:
 
 ```bash
 export AWS_REGION=eu-central-1
-export VPC_ID=<VPC_ID>
-export IGW_ID=<IGW_ID>
+export VPC_ID=vpc-...
+export IGW_ID=igw-...
 ```
 
 Inspect what still exists in the VPC:
@@ -518,31 +666,34 @@ aws ec2 describe-vpc-peering-connections \
 Terminate any remaining instances:
 
 ```bash
+INSTANCE_IDS=(i-... i-...)
 aws ec2 terminate-instances \
   --region "$AWS_REGION" \
-  --instance-ids <INSTANCE_ID_1> <INSTANCE_ID_2>
+  --instance-ids "${INSTANCE_IDS[@]}"
 ```
 
 ```bash
 aws ec2 wait instance-terminated \
   --region "$AWS_REGION" \
-  --instance-ids <INSTANCE_ID_1> <INSTANCE_ID_2>
+  --instance-ids "${INSTANCE_IDS[@]}"
 ```
 
 Delete any VPC peering connections:
 
 ```bash
+export PCX_ID=pcx-...
 aws ec2 delete-vpc-peering-connection \
   --region "$AWS_REGION" \
-  --vpc-peering-connection-id <PCX_ID>
+  --vpc-peering-connection-id "$PCX_ID"
 ```
 
 Delete non-default security groups:
 
 ```bash
+export SG_ID=sg-...
 aws ec2 delete-security-group \
   --region "$AWS_REGION" \
-  --group-id <SG_ID>
+  --group-id "$SG_ID"
 ```
 
 Inspect route table associations:
@@ -558,25 +709,28 @@ aws ec2 describe-route-tables \
 Disassociate each non-main route table association:
 
 ```bash
+export RTB_ASSOC_ID=rtbassoc-...
 aws ec2 disassociate-route-table \
   --region "$AWS_REGION" \
-  --association-id <RTB_ASSOC_ID>
+  --association-id "$RTB_ASSOC_ID"
 ```
 
 Delete each non-main route table:
 
 ```bash
+export RTB_ID=rtb-...
 aws ec2 delete-route-table \
   --region "$AWS_REGION" \
-  --route-table-id <RTB_ID>
+  --route-table-id "$RTB_ID"
 ```
 
 Delete the subnets:
 
 ```bash
+export SUBNET_ID=subnet-...
 aws ec2 delete-subnet \
   --region "$AWS_REGION" \
-  --subnet-id <SUBNET_ID>
+  --subnet-id "$SUBNET_ID"
 ```
 
 Detach and delete the Internet Gateway:

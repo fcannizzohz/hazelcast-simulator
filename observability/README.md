@@ -36,8 +36,26 @@ inventory apply
 inventory install observability
 ```
 
-The install command renders Prometheus to scrape `http://<mc-private-ip>:8080/metrics`, uploads this
-directory to `~/hazelcast-observability` on the observability host, and starts Docker Compose.
+The install command configures Management Center to connect to the `nodes` group as cluster `workers`,
+restarts Management Center, renders Prometheus to scrape `http://<mc-private-ip>:8080/metrics`, uploads
+this directory to `~/hazelcast-observability` on the observability host, and starts Docker Compose.
+
+If `HZ_LICENSEKEY` is present in the environment, the Management Center restart includes
+`MC_LICENSE=...` and `-Dhazelcast.mc.license=...`. This is optional for Community Edition clusters, but required for Enterprise-only
+MC features such as unrestricted Prometheus exporter use. The value is read from the Ansible controller
+environment, so it is not printed in the local Ansible command line. The Java system property can be visible in the
+MC JVM process arguments on the remote host while MC is running.
+
+Before running `hz-mc conf`, the installer stops the current MC process and removes a stale
+`~/hazelcast-mc/mc.lock` file if one remains. This avoids failed reconfiguration after an earlier MC process did
+not exit cleanly. The installer sets `MC_HOME=~/hazelcast-mc` for both `hz-mc conf` and the restarted MC process,
+so the cluster connection is saved in the same MC home that the process uses at runtime.
+
+Use these options if the default cluster connection does not match your project:
+
+```bash
+inventory install observability --member-hosts nodes --member-port 5701 --cluster-name workers
+```
 
 If `mc` is not provisioned, the command exits before running Ansible and tells you to set
 `mc.count: 1`.
@@ -49,7 +67,26 @@ After installation, open:
 - Grafana: `http://<observability-public-ip>:3000`
 - Prometheus: `http://<observability-public-ip>:9090`
 
-Find the public IP in `inventory.yaml` under the `observability` group.
+The install command prints the Management Center, Grafana, and Prometheus endpoints at the end of a successful run.
+You can also find the public IPs in `inventory.yaml` under the `mc` and `observability` groups.
+
+## Dashboards
+
+Grafana provisions every JSON dashboard from `observability/grafana/dashboards`.
+The bundled dashboards include:
+
+- `Cluster Overview`: member count, uptime, clients, heap, CPU, GC, file descriptors, and partition migration.
+- `AP Maps`: AP IMap inventory, entry counts, memory, operation rate, latency, hit rate, evictions, and expirations.
+- `Operations Reliability`: operation queues, invocations, timeouts, failed backups, executor queues, event queues, and TCP write pressure.
+- `Simulator Run Context`: run-level view of cluster size, clients, map throughput, failover/recovery signals, heap, and operation queues.
+- `Jet Jobs`: optional Jet job lifecycle, tasklets, queue fill, items in/out, watermark delay, event-time staleness, and snapshots.
+- CP subsystem dashboards for Raft, CP health, CP data structures, and CP map operations.
+
+The AP dashboards are based on the Management Center `/metrics` endpoint. They intentionally use only metric
+families observed in the live MC scrape model (`hz_*` via MC). Cache, near-cache, queue, topic, ringbuffer, and Jet
+AP data-structure panels should be added only when those metric families are present in the target workload. The Jet
+dashboard remains empty or zero until a Jet workload exposes `hz_jobs_*`, `hz_taskletCount`, `hz_queues*`,
+watermark, and snapshot metrics.
 
 ## Operate
 
@@ -100,6 +137,14 @@ inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo doc
 ```
 
 Replace `<mc-private-ip>` with the `mc` host private IP from `inventory.yaml`.
+
+If the scrape succeeds but Hazelcast metrics are absent, verify that Management Center has a configured
+cluster connection and that member workers are running:
+
+```bash
+inventory install observability --member-hosts nodes --cluster-name workers
+inventory shell --hosts mc "tail -100 ~/mc.out"
+```
 
 If `inventory install observability` reports that `mc` is missing, set `mc.count: 1`, run
 `inventory apply`, and rerun the install command.

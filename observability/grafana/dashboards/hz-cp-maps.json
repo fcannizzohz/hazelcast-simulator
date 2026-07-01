@@ -1,18 +1,20 @@
 {
   "uid": "hz-cp-maps",
-  "title": "HZ CP \u2014 Map Operations",
+  "title": "CP Map Operations",
   "schemaVersion": 38,
   "version": 1,
-  "refresh": "10s",
+  "refresh": "5s",
   "time": {
-    "from": "now-1h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "tags": [
     "hazelcast",
-    "cp-subsystem",
-    "maps"
+    "cp",
+    "cpmap",
+    "maps",
+    "operations"
   ],
   "templating": {
     "list": [

@@ -1,7 +1,7 @@
 apiVersion: 1
 
 providers:
-  - name: "Hazelcast CP Subsystem"
+  - name: "Hazelcast"
     orgId: 1
     folder: "Hazelcast"
     type: file

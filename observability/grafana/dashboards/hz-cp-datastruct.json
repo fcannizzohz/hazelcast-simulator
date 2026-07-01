@@ -1,18 +1,18 @@
 {
   "uid": "hz-cp-datastruct",
-  "title": "HZ CP \u2014 Data Structures",
+  "title": "CP Data Structures",
   "schemaVersion": 38,
   "version": 1,
-  "refresh": "10s",
+  "refresh": "5s",
   "time": {
-    "from": "now-1h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "tags": [
     "hazelcast",
-    "cp-subsystem",
-    "datastruct"
+    "cp",
+    "data-structures"
   ],
   "templating": {
     "list": [

@@ -114,11 +114,11 @@ def __prepare_hdr_file(config: ReportConfig, run_label, worker_id, hdr_file, bat
     # we need to apply the start/end so that the aggregated hdr dats for the whole run is correct.
     # otherwise it will contain the data during the warmup/cooldown and isn't correct.
     start_end = ""
-    period = config.periods[run_label]
+    period = config.periods.get(run_label)
     if config.warmup_seconds > 0:
         start_end = f" -start {config.warmup_seconds} "
 
-    if config.cooldown_seconds > 0:
+    if config.cooldown_seconds > 0 and period is not None:
         duration = period.end_time - period.start_time
         end = duration - config.cooldown_seconds
         start_end += f" -end {end} "

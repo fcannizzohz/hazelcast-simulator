@@ -1,0 +1,927 @@
+{
+  "uid": "hz-ap-maps",
+  "title": "AP Maps",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "tags": [
+    "hazelcast",
+    "ap",
+    "maps"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hz_runtime_uptime, mc_cluster)",
+        "query": {
+          "query": "label_values(hz_runtime_uptime, mc_cluster)",
+          "refId": "SV"
+        },
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "hide": 0,
+        "current": {
+          "text": "workers",
+          "value": "workers"
+        }
+      },
+      {
+        "name": "member",
+        "label": "Member",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hz_runtime_uptime{mc_cluster=\"$cluster\"}, mc_member)",
+        "query": {
+          "query": "label_values(hz_runtime_uptime{mc_cluster=\"$cluster\"}, mc_member)",
+          "refId": "SV"
+        },
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "hide": 0,
+        "current": {}
+      },
+      {
+        "name": "map",
+        "label": "Map",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hz_map_ownedEntryCount{mc_cluster=\"$cluster\"}, name)",
+        "query": {
+          "query": "label_values(hz_map_ownedEntryCount{mc_cluster=\"$cluster\"}, name)",
+          "refId": "SV"
+        },
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "hide": 0,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 8
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## Hazelcast AP Maps\n\nAP IMap view for Simulator workloads. These panels use Management Center `hz_map_*` metrics validated from the live `/metrics` scrape.\n\n**Key questions this dashboard answers:**\n- Which maps hold the most entries and memory?\n- What operation mix is the workload generating?\n- Are get/put/set/remove latencies rising during failover?\n- Are evictions, expirations, locked entries, or dirty entries appearing unexpectedly?\n\n**Filters:** **Cluster**, **Member**, and **Map**. Internal maps starting with `_` are excluded from most workload panels."
+      },
+      "transparent": true
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "Map Inventory",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Live Maps",
+      "description": "Distinct non-internal maps exported by MC.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(count by (name) (hz_map_ownedEntryCount{mc_cluster=\"$cluster\", name!~\"^_.*\"}))",
+          "legendFormat": "maps",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total Owned Entries",
+      "description": "Owned AP map entries across selected maps.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 9,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_map_ownedEntryCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "entries",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total Backup Entries",
+      "description": "Backup AP map entries across selected maps.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_map_backupEntryCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "entries",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Total Map Memory",
+      "description": "Owned plus backup entry memory cost.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 9,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_map_ownedEntryMemoryCost{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}) + sum(hz_map_backupEntryMemoryCost{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "bytes",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "Top Maps by Entries",
+      "description": "Top maps by owned entry count.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "topk(10, sum by (name) (hz_map_ownedEntryCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}))",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "bargauge",
+      "title": "Top Maps by Memory",
+      "description": "Top maps by owned + backup memory cost.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "topk(10, sum by (name) (hz_map_ownedEntryMemoryCost{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}) + sum by (name) (hz_map_backupEntryMemoryCost{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}))",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Operation Throughput and Latency",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Map Operation Rate",
+      "description": "Cluster-wide AP map operation rate by operation type.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_getCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "get/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_putCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "put/s",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_setCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "set/s",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_removeCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "remove/s",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Average Map Latency",
+      "description": "Latency from cumulative latency counters divided by operation counts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_totalGetLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])) / clamp_min(sum(rate(hz_map_getCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])), 1)",
+          "legendFormat": "get",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_totalPutLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])) / clamp_min(sum(rate(hz_map_putCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])), 1)",
+          "legendFormat": "put",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_totalSetLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])) / clamp_min(sum(rate(hz_map_setCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])), 1)",
+          "legendFormat": "set",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_totalRemoveLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])) / clamp_min(sum(rate(hz_map_removeCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval])), 1)",
+          "legendFormat": "remove",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Max Map Latency Observed",
+      "description": "Maximum latency counters by map and operation.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (name) (hz_map_totalMaxGetLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "get {{name}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (name) (hz_map_totalMaxPutLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "put {{name}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (name) (hz_map_totalMaxSetLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "set {{name}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (name) (hz_map_totalMaxRemoveLatency{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "remove {{name}}",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Map Hit Rate",
+      "description": "Rate of map hit counter increments by map.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 30,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (name) (rate(hz_map_hits{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Storage and Churn",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Entry Counts",
+      "description": "Owned, backup, dirty, and locked entries across selected maps.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_map_ownedEntryCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "owned",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_map_backupEntryCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "backup",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_map_dirtyEntryCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "dirty",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_map_lockedEntryCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"})",
+          "legendFormat": "locked",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Eviction and Expiration Rate",
+      "description": "Unexpected non-zero values during stable tests may indicate memory pressure or TTL/max-idle behavior.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_evictionCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "evictions/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_forceEvictionCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "force evictions/s",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_map_expirationCount{mc_cluster=\"$cluster\", name=~\"$map\", name!~\"^_.*\"}[$__rate_interval]))",
+          "legendFormat": "expirations/s",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}

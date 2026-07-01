@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+NOT_FOUND_MARKERS = (
+    "InvalidKeyPair.NotFound",
+    "InvalidPlacementGroup.Unknown",
+    "InvalidPlacementGroup.NotFound",
+    "InvalidGroup.NotFound",
+    "InvalidSubnetID.NotFound",
+    "InvalidRouteTableID.NotFound",
+    "InvalidAssociationID.NotFound",
+    "InvalidVpcPeeringConnectionID.NotFound",
+    "InvalidInstanceID.NotFound",
+    "InvalidNetworkInterfaceID.NotFound",
+    "InvalidRoute.NotFound",
+    "does not exist",
+    "not found",
+    "NotFound",
+)
+
+
+def log(message):
+    print(message, flush=True)
+
+
+def load_plan(project_dir):
+    try:
+        import yaml
+    except ImportError:
+        raise SystemExit("ERROR: PyYAML is required. Run from the simulator virtualenv or install pyyaml.")
+
+    plan_path = project_dir / "inventory_plan.yaml"
+    if not plan_path.exists():
+        raise SystemExit(f"ERROR: inventory_plan.yaml not found in [{project_dir}]")
+    with plan_path.open() as f:
+        plan = yaml.safe_load(f) or {}
+    if "basename" not in plan:
+        raise SystemExit(f"ERROR: basename is missing in [{plan_path}]")
+    return plan
+
+
+def region_suffix(region):
+    return region.replace("-", "_")
+
+
+def aws_base(plan, region):
+    cmd = ["aws"]
+    profile = plan.get("aws_profile")
+    if profile:
+        cmd.extend(["--profile", str(profile)])
+    cmd.extend(["ec2", "--region", region])
+    return cmd
+
+
+def run_aws(plan, region, args, *, dry_run=False, json_output=False, tolerate_missing=True):
+    cmd = aws_base(plan, region) + args
+    log("+ " + " ".join(cmd))
+    if dry_run:
+        return {} if json_output else ""
+
+    result = subprocess.run(cmd, text=True, capture_output=True)
+    output = result.stdout.strip()
+    error = result.stderr.strip()
+
+    if result.returncode != 0:
+        combined = f"{output}\n{error}"
+        if tolerate_missing and any(marker in combined for marker in NOT_FOUND_MARKERS):
+            log(f"  ignored missing resource: {error or output}")
+            return {} if json_output else ""
+        log(f"  WARN: command failed with exit code {result.returncode}")
+        if output:
+            log(output)
+        if error:
+            log(error)
+        return {} if json_output else ""
+
+    if json_output:
+        if not output:
+            return {}
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            log(f"  WARN: expected JSON output, got: {output}")
+            return {}
+
+    if output:
+        log(output)
+    return output
+
+
+def build_targets(plan):
+    basename = plan["basename"]
+    if "dcs" not in plan:
+        region = plan["region"]
+        vpc_id = plan["vpc_id"]
+        return {
+            region: {
+                "vpc_id": vpc_id,
+                "cidrs": [plan.get("cidr_block")],
+                "subnet_names": [f"Simulator Public Subnet {basename}"],
+                "route_table_names": [f"Simulator Public Subnet Route Table {basename}"],
+                "security_group_names": [
+                    f"simulator-security-group-node-{basename}",
+                    f"simulator-security-group-loadgenerator-{basename}",
+                    f"simulator-security-group-mc-{basename}",
+                    f"simulator-security-group-observability-{basename}",
+                ],
+                "instance_names": [
+                    f"Simulator Node {basename}",
+                    f"Simulator Load Generator {basename}",
+                    f"Simulator MC {basename}",
+                    f"Simulator Observability {basename}",
+                ],
+                "delete_placement_group": True,
+            }
+        }
+
+    targets = {}
+    for dc in plan.get("dcs", []):
+        region = dc["region"]
+        target = targets.setdefault(region, {
+            "vpc_id": dc["vpc_id"],
+            "cidrs": [],
+            "subnet_names": [],
+            "route_table_names": [f"Simulator Public Subnet Route Table {basename} {region}"],
+            "security_group_names": [
+                f"simulator-security-group-node-{basename}-{region_suffix(region)}",
+                f"simulator-security-group-loadgenerator-{basename}-{region_suffix(region)}",
+                f"simulator-security-group-mc-{basename}-{region_suffix(region)}",
+                f"simulator-security-group-observability-{basename}-{region_suffix(region)}",
+            ],
+            "instance_names": [],
+            "delete_placement_group": False,
+        })
+        target["cidrs"].append(dc.get("cidr_block"))
+        target["subnet_names"].append(f"Simulator Public Subnet {basename} {dc['name']}")
+        target["instance_names"].extend([
+            f"Simulator Node {basename} {dc['name']}",
+            f"Simulator Load Generator {basename} {dc['name']}",
+            f"Simulator MC {basename} {dc['name']}",
+            f"Simulator Observability {basename} {dc['name']}",
+        ])
+    return targets
+
+
+def describe_instances(plan, region, names, dry_run):
+    if not names:
+        return []
+    data = run_aws(plan, region, [
+        "describe-instances",
+        "--filters",
+        "Name=instance-state-name,Values=pending,running,stopping,stopped",
+        f"Name=tag:Name,Values={','.join(names)}",
+        "--output", "json",
+    ], dry_run=dry_run, json_output=True)
+    instances = []
+    for reservation in data.get("Reservations", []):
+        for instance in reservation.get("Instances", []):
+            instances.append(instance["InstanceId"])
+    return instances
+
+
+def find_subnets(plan, region, vpc_id, names, cidrs, dry_run):
+    filters = [f"Name=vpc-id,Values={vpc_id}"]
+    if names:
+        filters.append(f"Name=tag:Name,Values={','.join(names)}")
+    data = run_aws(plan, region, [
+        "describe-subnets",
+        "--filters",
+        *filters,
+        "--output", "json",
+    ], dry_run=dry_run, json_output=True)
+    wanted_cidrs = {cidr for cidr in cidrs if cidr}
+    subnets = []
+    for subnet in data.get("Subnets", []):
+        if not wanted_cidrs or subnet.get("CidrBlock") in wanted_cidrs:
+            subnets.append(subnet["SubnetId"])
+    return subnets
+
+
+def find_route_tables(plan, region, vpc_id, names, dry_run):
+    route_tables = set()
+    for name in names:
+        data = run_aws(plan, region, [
+            "describe-route-tables",
+            "--filters",
+            f"Name=vpc-id,Values={vpc_id}",
+            f"Name=tag:Name,Values={name}",
+            "--output", "json",
+        ], dry_run=dry_run, json_output=True)
+        for route_table in data.get("RouteTables", []):
+            route_tables.add(route_table["RouteTableId"])
+    return sorted(route_tables)
+
+
+def find_subnet_route_associations(plan, region, subnet_id, dry_run):
+    data = run_aws(plan, region, [
+        "describe-route-tables",
+        "--filters",
+        f"Name=association.subnet-id,Values={subnet_id}",
+        "--output", "json",
+    ], dry_run=dry_run, json_output=True)
+    association_ids = []
+    route_table_ids = []
+    for route_table in data.get("RouteTables", []):
+        route_table_ids.append(route_table["RouteTableId"])
+        for association in route_table.get("Associations", []):
+            if association.get("SubnetId") == subnet_id and not association.get("Main", False):
+                association_ids.append(association["RouteTableAssociationId"])
+    return association_ids, route_table_ids
+
+
+def find_security_groups(plan, region, vpc_id, names, dry_run):
+    data = run_aws(plan, region, [
+        "describe-security-groups",
+        "--filters",
+        f"Name=vpc-id,Values={vpc_id}",
+        f"Name=group-name,Values={','.join(names)}",
+        "--output", "json",
+    ], dry_run=dry_run, json_output=True)
+    return [group["GroupId"] for group in data.get("SecurityGroups", [])]
+
+
+def find_vpc_peerings(plan, region, basename, dry_run):
+    data = run_aws(plan, region, [
+        "describe-vpc-peering-connections",
+        "--filters",
+        f"Name=tag:Name,Values=Simulator VPC Peering {basename},Simulator VPC Peering Accepter {basename}",
+        "--output", "json",
+    ], dry_run=dry_run, json_output=True)
+    return [
+        peering["VpcPeeringConnectionId"]
+        for peering in data.get("VpcPeeringConnections", [])
+        if peering.get("Status", {}).get("Code") != "deleted"
+    ]
+
+
+def cleanup_project(project_dir, dry_run):
+    if not shutil.which("aws") and not dry_run:
+        raise SystemExit("ERROR: aws CLI is not installed or not on PATH")
+
+    plan = load_plan(project_dir)
+    basename = plan["basename"]
+    targets = build_targets(plan)
+    key_name = f"simulator-keypair-{basename}"
+    placement_group = f"simulator-placement-group-{basename}"
+
+    log(f"Cleaning AWS resources for project [{project_dir}] basename [{basename}]")
+
+    for region, target in targets.items():
+        log(f"\n== Region {region}: instances ==")
+        instances = describe_instances(plan, region, target["instance_names"], dry_run)
+        if instances:
+            run_aws(plan, region, ["terminate-instances", "--instance-ids", *instances], dry_run=dry_run)
+            if not dry_run:
+                run_aws(plan, region, ["wait", "instance-terminated", "--instance-ids", *instances], dry_run=False)
+        else:
+            log("No matching non-terminated instances found")
+
+    for region in targets:
+        log(f"\n== Region {region}: VPC peering ==")
+        for peering_id in find_vpc_peerings(plan, region, basename, dry_run):
+            run_aws(plan, region, ["delete-vpc-peering-connection", "--vpc-peering-connection-id", peering_id], dry_run=dry_run)
+
+    for region, target in targets.items():
+        log(f"\n== Region {region}: subnets and route tables ==")
+        subnet_ids = find_subnets(plan, region, target["vpc_id"], target["subnet_names"], target["cidrs"], dry_run)
+        route_table_ids = set(find_route_tables(plan, region, target["vpc_id"], target["route_table_names"], dry_run))
+
+        for subnet_id in subnet_ids:
+            association_ids, associated_route_tables = find_subnet_route_associations(plan, region, subnet_id, dry_run)
+            route_table_ids.update(associated_route_tables)
+            for association_id in association_ids:
+                run_aws(plan, region, ["disassociate-route-table", "--association-id", association_id], dry_run=dry_run)
+
+        for route_table_id in sorted(route_table_ids):
+            run_aws(plan, region, ["delete-route-table", "--route-table-id", route_table_id], dry_run=dry_run)
+
+        for subnet_id in subnet_ids:
+            run_aws(plan, region, ["delete-subnet", "--subnet-id", subnet_id], dry_run=dry_run)
+
+    for region, target in targets.items():
+        log(f"\n== Region {region}: security groups ==")
+        for group_id in find_security_groups(plan, region, target["vpc_id"], target["security_group_names"], dry_run):
+            run_aws(plan, region, ["delete-security-group", "--group-id", group_id], dry_run=dry_run)
+
+    for region, target in targets.items():
+        log(f"\n== Region {region}: key pair and placement group ==")
+        run_aws(plan, region, ["delete-key-pair", "--key-name", key_name], dry_run=dry_run)
+        if target["delete_placement_group"]:
+            run_aws(plan, region, ["delete-placement-group", "--group-name", placement_group], dry_run=dry_run)
+
+    log("\nCleanup pass complete. Re-run the script if AWS reported dependency violations.")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Delete stale AWS resources for a Simulator project using inventory_plan.yaml."
+    )
+    parser.add_argument("project_dir", help="Path to the Simulator project directory")
+    parser.add_argument("--dry-run", action="store_true", help="Print AWS commands without executing them")
+    args = parser.parse_args()
+
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    cleanup_project(project_dir, args.dry_run)
+
+
+if __name__ == "__main__":
+    main()

@@ -10,6 +10,7 @@ extraTags: {}
 
 primary_dc: dc-a
 mc_dc: dc-a
+observability_dc: dc-a
 
 keypair:
     public_key: key.pub
@@ -28,6 +29,13 @@ loadgenerators:
     tenancy: null
 
 mc:
+    instance_type: c5d.xlarge
+    count: 1
+    ami: ami-03ceeb33c1e4abcd1
+    user: ubuntu
+    tenancy: null
+
+observability:
     instance_type: c5d.xlarge
     count: 1
     ami: ami-03ceeb33c1e4abcd1

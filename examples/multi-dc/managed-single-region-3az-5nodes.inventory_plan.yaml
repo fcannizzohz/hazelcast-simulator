@@ -1,7 +1,7 @@
 provisioner: terraform
 terraform_plan: aws
 
-basename: my-single-region-multidc
+basename: my-single-region-3az-multidc
 owner: my-team
 
 team: Cloud
@@ -60,6 +60,17 @@ dcs:
       vpc_id: vpc-aaaaaaaaaaaaaaaaa
       internet_gateway_id: igw-aaaaaaaaaaaaaaaaa
       cidr_block: 172.31.89.0/24
+      nodes:
+          count: 2
+      loadgenerators:
+          count: 0
+
+    - name: dc-c
+      region: eu-west-2
+      availability_zone: eu-west-2c
+      vpc_id: vpc-aaaaaaaaaaaaaaaaa
+      internet_gateway_id: igw-aaaaaaaaaaaaaaaaa
+      cidr_block: 172.31.90.0/24
       nodes:
           count: 1
       loadgenerators:

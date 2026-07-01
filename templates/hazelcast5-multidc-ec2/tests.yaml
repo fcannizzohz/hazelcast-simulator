@@ -1,8 +1,18 @@
 - name: map-benchmark
+  duration: 600s
+  repetitions: 1
+  clients: 1
+  members: 3
+  driver: hazelcast5
+  version: maven=5.7.0
+  loadgenerator_hosts: loadgenerators
+  node_hosts: nodes
+  verify_enabled: false
+  performance_monitor_interval_seconds: 1
+  warmup_seconds: 0
+  cooldown_seconds: 0
   test:
-    class: map.MapTest
-  client:
-    args:
+    - class: map.MapTest
       threadCount: 20
       keyCount: 1000000
       operationCount: 1000000

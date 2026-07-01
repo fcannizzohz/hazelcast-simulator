@@ -1,8 +1,8 @@
-- name: smoke-5m
-  duration: 300s
+- name: enterprise-failover-10m
+  duration: 600s
   repetitions: 1
   clients: 1
-  members: 3
+  members: 5
   driver: hazelcast-enterprise5
   version: maven=5.7.0
   license_key: <add key here>
@@ -34,8 +34,8 @@
     - class: com.hazelcast.simulator.tests.map.LongByteArrayMapTest
       name: map
       threadCount: 20
-      getProb: 1
-      putProb: 0
+      getProb: 0.95
+      putProb: 0.05
       keyDomain: 100000
       valueCount: 100
       minValueLength: 1000

@@ -1,0 +1,157 @@
+#!/bin/bash
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  aws_inventory_values --team TEAM [--images] [--image-owner OWNER] [--image-name NAME_PATTERN] [--architecture ARCH] REGION [REGION...]
+
+Print AWS values used by Simulator inventory_plan.yaml for one or more regions.
+
+Example:
+  aws_inventory_values --team Cloud eu-west-2 eu-central-1
+  aws_inventory_values --team Cloud --images eu-west-2 eu-central-1
+EOF
+}
+
+team=""
+images=false
+image_owner="099720109477"
+image_name="ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
+architecture="x86_64"
+regions=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --team)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --team requires a value" >&2
+                exit 1
+            fi
+            team="$2"
+            shift 2
+            ;;
+        --images)
+            images=true
+            shift
+            ;;
+        --image-owner)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --image-owner requires a value" >&2
+                exit 1
+            fi
+            image_owner="$2"
+            shift 2
+            ;;
+        --image-name)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --image-name requires a value" >&2
+                exit 1
+            fi
+            image_name="$2"
+            shift 2
+            ;;
+        --architecture)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --architecture requires a value" >&2
+                exit 1
+            fi
+            architecture="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while [[ $# -gt 0 ]]; do
+                regions+=("$1")
+                shift
+            done
+            ;;
+        -*)
+            echo "ERROR: unknown option [$1]" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            regions+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$team" ]]; then
+    echo "ERROR: --team is required" >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ ${#regions[@]} -eq 0 ]]; then
+    echo "ERROR: at least one region is required" >&2
+    usage >&2
+    exit 1
+fi
+
+if ! command -v aws >/dev/null 2>&1; then
+    echo "ERROR: aws CLI is not installed or not on PATH" >&2
+    exit 1
+fi
+
+for region in "${regions[@]}"; do
+    echo
+    echo "region: ${region}"
+    echo "team: ${team}"
+
+    echo "availability_zone:"
+    aws ec2 describe-availability-zones \
+        --region "$region" \
+        --filters Name=state,Values=available \
+        --query 'AvailabilityZones[].ZoneName' \
+        --output text
+
+    vpc_id=$(aws ec2 describe-vpcs \
+        --region "$region" \
+        --filters Name=is-default,Values=true \
+        --query 'Vpcs[0].VpcId' \
+        --output text)
+
+    echo "vpc_id:"
+    echo "$vpc_id"
+
+    echo "internet_gateway_id:"
+    aws ec2 describe-internet-gateways \
+        --region "$region" \
+        --filters Name=attachment.vpc-id,Values="$vpc_id" \
+        --query 'InternetGateways[0].InternetGatewayId' \
+        --output text
+
+    echo "existing subnet cidr_block values:"
+    aws ec2 describe-subnets \
+        --region "$region" \
+        --filters Name=vpc-id,Values="$vpc_id" \
+        --query 'Subnets[].{Az:AvailabilityZone,Cidr:CidrBlock,SubnetId:SubnetId}' \
+        --output table
+
+    echo "Pick an unused cidr_block inside the VPC CIDR below:"
+    aws ec2 describe-vpcs \
+        --region "$region" \
+        --vpc-ids "$vpc_id" \
+        --query 'Vpcs[0].CidrBlock' \
+        --output text
+
+    if [[ "$images" == true ]]; then
+        echo "candidate ami values:"
+        aws ec2 describe-images \
+            --region "$region" \
+            --owners "$image_owner" \
+            --filters \
+                "Name=name,Values=${image_name}" \
+                "Name=architecture,Values=${architecture}" \
+                "Name=state,Values=available" \
+            --query 'sort_by(Images,&CreationDate)[-5:].{ImageId:ImageId,Name:Name,Created:CreationDate}' \
+            --output table
+    fi
+done

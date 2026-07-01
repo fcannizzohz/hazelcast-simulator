@@ -1,18 +1,19 @@
 {
   "uid": "hz-raft",
-  "title": "HZ CP \u2014 Raft Internals",
+  "title": "CP Raft Internals",
   "schemaVersion": 38,
   "version": 1,
-  "refresh": "10s",
+  "refresh": "5s",
   "time": {
-    "from": "now-1h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "tags": [
     "hazelcast",
-    "cp-subsystem",
-    "raft"
+    "cp",
+    "raft",
+    "internals"
   ],
   "templating": {
     "list": [
@@ -96,7 +97,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## Raft Internals\n\nThis dashboard exposes the low-level mechanics of the **Raft consensus algorithm** as implemented by the Hazelcast CP Subsystem.\nUse it to diagnose replication problems, log pressure, and leadership instability.\n\n**Key questions this dashboard answers:**\n- Is the Raft log being committed and applied at the same pace on all members? *(Commit Index vs Last Applied)*\n- How close is the log to being full \u2014 i.e., will new writes be rejected soon? *(Available Log Capacity)*\n- How often are leader elections happening, and are they getting more frequent? *(Elections / Term)*\n- Which member is the current leader of each CP group, and when did that last change? *(Leader Timeline)*\n\n**Filters:** use **CP Group** to isolate a single group. Use **Member** to compare behaviour across specific nodes.\n\n**Normal state:** commit lag near 0, term flat, available capacity > 3 000, one stable leader per group.\n**Warning signs:** commit lag growing, term stepping up repeatedly, capacity below 1 000, or leadership bouncing between members."
+        "content": "## Raft Internals\n\nThis dashboard exposes the low-level mechanics of the **Raft consensus algorithm** as implemented by the CP Subsystem.\nUse it to diagnose replication problems, log pressure, and leadership instability.\n\n**Key questions this dashboard answers:**\n- Is the Raft log being committed and applied at the same pace on all members? *(Commit Index vs Last Applied)*\n- How close is the log to being full \u2014 i.e., will new writes be rejected soon? *(Available Log Capacity)*\n- How often are leader elections happening, and are they getting more frequent? *(Elections / Term)*\n- Which member is the current leader of each CP group, and when did that last change? *(Leader Timeline)*\n\n**Filters:** use **CP Group** to isolate a single group. Use **Member** to compare behaviour across specific nodes.\n\n**Normal state:** commit lag near 0, term flat, available capacity > 3 000, one stable leader per group.\n**Warning signs:** commit lag growing, term stepping up repeatedly, capacity below 1 000, or leadership bouncing between members."
       },
       "transparent": true
     },
