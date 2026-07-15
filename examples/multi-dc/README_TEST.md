@@ -39,27 +39,31 @@ docker run --rm -it -v "$(pwd):/workspace" "$SIM_IMAGE" inventory --help
 
 ## Scope
 
-This runbook covers five manual scenarios:
+This runbook covers six manual scenarios:
 
 1. `hazelcast5-ec2` regression test with a normal single-DC setup
 2. `hazelcast5-multidc-ec2` single-region multi-DC with 3 members over 2 AZs
 3. `hazelcast5-multidc-ec2` two-region multi-DC with 3 members, one in each AZ
 4. `hazelcast5-multidc-ec2` node failover during a 10 minute Enterprise test
 5. `hazelcast5-multidc-ec2` single-region 3-AZ DC failover with a 2/2/1 deployment
+6. `hazelcast5-multidc-ec2` single-region 2-AZ stretched cluster failover with a 2/2 deployment
 
 The first three scenarios use the 5 minute Enterprise smoke test from
 [smoke-tests.yaml](./smoke-tests.yaml). The failover scenarios use
 [enterprise-failover-10m-tests.yaml](./enterprise-failover-10m-tests.yaml).
 
-## Create Simulator Projects
+## Running or Creating a Runbook
 
-Each scenario starts by creating a Simulator project with `perftest create`,
-then copying in the scenario-specific `inventory_plan.yaml` and `tests.yaml`.
-The `perftest create` command generates the project directory and its `key` /
-`key.pub` pair under `./simulator-projects`.
+Each scenario below is a runbook: it names the Simulator template to start from,
+the example inventory plan to use, the test suite to run, and any extra action
+that makes the scenario distinct. To run an existing runbook, create the project
+with `perftest create`, copy the scenario's `inventory_plan.yaml` and
+`tests.yaml`, then set `PROJECT` to that project directory. The create step
+generates the project directory and its `key` / `key.pub` pair under
+`./simulator-projects`.
 
-Because these scenarios use Hazelcast Enterprise, set the license key before
-replacing the placeholder in the copied `tests.yaml`:
+These scenarios use Hazelcast Enterprise, so set the license key once and
+replace the placeholder in the copied `tests.yaml` before provisioning:
 
 ```bash
 export HZ_LICENSEKEY='<your Hazelcast Enterprise license key>'
@@ -74,32 +78,13 @@ restarted. The value is not passed on the local Ansible command line, but the
 Java system property can be visible in the MC JVM process arguments on the
 remote host while MC is running.
 
-Before provisioning a managed AWS scenario, make sure AWS credentials are
+Before provisioning a managed AWS runbook, make sure AWS credentials are
 available in `~/.aws` and that the copied `inventory_plan.yaml` contains valid
-AMI, VPC, Internet Gateway, region, and AZ values.
-
-Managed scenarios provision at least:
-
-- Hazelcast members
-- 1 load generator
-- 1 Management Center host
-- 1 observability host with Grafana on port `3000` and Prometheus on port `9090`
-
-The observability installer requires the `mc` group. If the plan has `mc.count:
-0` or no `mc` group in `inventory.yaml`, `inventory install observability` should
-fail with a clear message instead of producing a partial install.
-
-## Helper Commands
-
-Print AWS values to copy into `inventory_plan.yaml` for one or more regions:
+AMI, VPC, Internet Gateway, region, and AZ values. Use
+`./bin/aws_inventory_values` to print values that can be copied into the plan:
 
 ```bash
 ./bin/aws_inventory_values --team Cloud eu-west-2 eu-central-1
-```
-
-Include recent Ubuntu AMI candidates for each region:
-
-```bash
 ./bin/aws_inventory_values --team Cloud --images eu-west-2 eu-central-1
 ```
 
@@ -115,21 +100,15 @@ cidr_block: <unused /24 inside the VPC CIDR>
 team: <team>
 ```
 
-Set `PROJECT` to the current project directory before using these helpers:
+After the plan is filled in, the normal runbook path is to apply the inventory,
+install the required software, verify connectivity, run the test, inspect the
+report, and finally destroy the project. All of these commands run from the
+project directory through `./bin/docker-sim`; the wrapper changes into
+`PROJECT`, mounts the repository and Maven cache, and runs the selected
+Simulator image:
 
 ```bash
 export PROJECT="$(pwd)/simulator-projects/<project>"
-```
-
-Then run Simulator commands through the Docker wrapper:
-
-```bash
-./bin/docker-sim inventory apply
-```
-
-Install and verify a provisioned project:
-
-```bash
 ./bin/docker-sim inventory apply
 ./bin/docker-sim inventory install java
 ./bin/docker-sim inventory install simulator
@@ -139,32 +118,41 @@ Install and verify a provisioned project:
 ./bin/docker-sim inventory control probe --hosts nodes
 ```
 
-`inventory install observability` preconfigures MC to connect to the `nodes`
-group as cluster `workers`, restarts MC, then starts Prometheus and Grafana. It
-also sets `MC_HOME=~/hazelcast-mc` for both `hz-mc conf` and the restarted MC
-process, and removes a stale `~/hazelcast-mc/mc.lock` before running `hz-mc
-conf`, so rerunning the installer can update MC after an earlier MC process was
-stopped.
+Managed runbooks provision Hazelcast members, one load generator, one Management
+Center host, and one observability host with Grafana on port `3000` and
+Prometheus on port `9090`. `inventory install observability` preconfigures MC to
+connect to the `nodes` group as cluster `workers`, restarts MC, then starts
+Prometheus and Grafana. It also sets `MC_HOME=~/hazelcast-mc` for both `hz-mc
+conf` and the restarted MC process, and removes a stale
+`~/hazelcast-mc/mc.lock` before running `hz-mc conf`, so rerunning the installer
+can update MC after an earlier MC process was stopped. The observability
+installer requires the `mc` group. If the plan has `mc.count: 0` or no `mc`
+group in `inventory.yaml`, `inventory install observability` should fail with a
+clear message instead of producing a partial install.
+
 If you change the cluster name or member port, pass the matching values:
 
 ```bash
 ./bin/docker-sim inventory install observability --member-hosts nodes --member-port 5701 --cluster-name workers
 ```
 
-Print the MC, Grafana, and Prometheus URLs:
+At the end of a successful observability install, the command prints the MC,
+Grafana, and Prometheus URLs. You can print them again from `inventory.yaml`:
 
 ```bash
 ./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); mc=next(iter(inv["mc"]["hosts"])); obs=next(iter(inv["observability"]["hosts"])); print(f"MC: http://{mc}:8080"); print(f"Grafana: http://{obs}:3000"); print(f"Prometheus: http://{obs}:9090")'
 ```
 
-`inventory install observability` also prints these endpoints at the end of a
-successful install.
-
 **Important**: MC is preconfigured during install, but it only connects while the
 Hazelcast members are actually running. If you only did inventory apply/install
 but have not started a test yet, the cluster may not exist yet.
 
-Toggle member diagnostics dynamically while the cluster is running:
+Once the cluster is running, optional control commands can inspect or change live
+members. Diagnostics commands use the MC diagnostics configuration REST API, so
+Enterprise MC licensing and a configured cluster connection are required. The
+member worker script preconfigures diagnostics output under each worker
+directory, so any diagnostics files generated during the run are downloaded with
+the normal run artifacts under each worker's `diagnostics/` directory:
 
 ```bash
 ./bin/docker-sim inventory control diagnostics-status --cluster workers
@@ -172,31 +160,34 @@ Toggle member diagnostics dynamically while the cluster is running:
 ./bin/docker-sim inventory control diagnostics-off --cluster workers
 ```
 
-These commands use the MC diagnostics configuration REST API. Enterprise MC
-licensing and a configured cluster connection are required. The member worker
-script preconfigures diagnostics output under each worker directory, so any
-diagnostics files generated during the run are downloaded with the normal run
-artifacts under each worker's `diagnostics/` directory.
-
-Tail the observability stack:
+Use the observability host commands when you need to check the Prometheus and
+Grafana containers directly:
 
 ```bash
 ./bin/docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose ps || sudo docker-compose ps)"
 ./bin/docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose logs --tail=100 || sudo docker-compose logs --tail=100)"
 ```
 
-Run a test and inspect the generated report:
+Run the test with `perftest run`. It starts the configured workers, downloads
+the worker data at the end, and creates a local report under `runs/`:
 
 ```bash
 ./bin/docker-sim perftest run
 ./bin/docker-sim sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); echo "$LATEST_RUN"; find "$LATEST_RUN/report" -maxdepth 2 -type f | sort'
 ```
 
-Destroy a project:
+Destroy the managed AWS resources when you are done:
 
 ```bash
 ./bin/docker-sim inventory destroy
 ```
+
+When creating your own runbook, copy the same structure: choose a template,
+provide an inventory plan that declares the topology, provide a `tests.yaml`,
+document the values the user must fill in, and then refer back to the shared
+apply/install/observe/run/destroy flow above. If the runbook includes a failover
+or control-plane action, add only the extra commands needed for that behavior
+after the shared install steps.
 
 If `inventory apply` fails with duplicate key pair, placement group, or security
 group names, AWS already has resources for the same project `basename` and VPC
@@ -245,7 +236,7 @@ Provision, install, observe, run, and destroy:
 ```bash
 ./bin/docker-sim inventory apply
 ./bin/docker-sim sh -lc 'cat inventory.yaml'
-# Run the helper commands: install and verify, print URLs, run the test, destroy.
+# Continue with the shared install, verify, observe, run, and destroy flow above.
 ```
 
 The regression path uses the older `hazelcast5-ec2` template, which still
@@ -276,7 +267,7 @@ Provision, install, observe, run, and destroy:
 ```bash
 ./bin/docker-sim inventory apply
 ./bin/docker-sim sh -lc 'cat inventory.yaml'
-# Run the helper commands: install and verify, print URLs, run the test, destroy.
+# Continue with the shared install, verify, observe, run, and destroy flow above.
 ```
 
 ## Scenario 3: Two-Region Multi-DC
@@ -306,7 +297,7 @@ Provision, install, observe, run, and destroy:
 ```bash
 ./bin/docker-sim inventory apply
 ./bin/docker-sim sh -lc 'cat inventory.yaml'
-# Run the helper commands: install and verify, print URLs, run the test, destroy.
+# Continue with the shared install, verify, observe, run, and destroy flow above.
 ```
 
 ## Scenario 4: Node Failover During a 10 Minute Test
@@ -325,7 +316,7 @@ Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
 `internet_gateway_id`. The deployment uses 2 members in `dc-a`, 2 members in
 `dc-b`, and 1 member in `dc-c`.
 
-Provision and install with the helper commands. Then choose one member host from
+Provision and install with the shared runbook flow. Then choose one member host from
 `dc-b`:
 
 ```bash
@@ -364,7 +355,7 @@ python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"])
 ```
 
 Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
-`internet_gateway_id`, then provision and install with the helper commands.
+`internet_gateway_id`, then provision and install with the shared runbook flow.
 
 This scenario fails the singleton DC in the 2/2/1 layout:
 
@@ -396,6 +387,55 @@ member from another terminal:
 
 The expected result is a completed run where the cluster survives the temporary
 loss of the one-member DC and converges after `dc-c` rejoins.
+
+## Scenario 6: Single-Region 2-AZ Stretched Cluster AZ Failover
+
+Create the project:
+
+```bash
+docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-2az-stretched-failover
+cp ./examples/multi-dc/managed-single-region-2az-4nodes.inventory_plan.yaml ./simulator-projects/multidc-2az-stretched-failover/inventory_plan.yaml
+cp ./examples/multi-dc/enterprise-failover-10m-tests.yaml ./simulator-projects/multidc-2az-stretched-failover/tests.yaml
+export PROJECT="$(pwd)/simulator-projects/multidc-2az-stretched-failover"
+python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+```
+
+Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
+`internet_gateway_id`, then provision and install with the shared runbook flow.
+
+This scenario uses a stretched 4-member cluster split evenly across two AZs:
+
+- `dc-a`: 2 members in AZ A with the load generator, MC, and observability host
+- `dc-b`: 2 members in AZ B
+
+The failover action targets `dc-b` so the load generator, MC, and observability
+host remain available in `dc-a` while the remote AZ is restarted.
+
+Choose all member hosts in `dc-b`:
+
+```bash
+export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("passthrough:dc") == "dc-b"))')
+echo "$FAILOVER_HOSTS"
+```
+
+Start the 10 minute test in one terminal:
+
+```bash
+./bin/docker-sim perftest run
+```
+
+After the test has been running for at least 60 seconds, restart the `dc-b`
+members from another terminal:
+
+```bash
+./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOSTS"
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --dry-run
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --yes
+```
+
+The expected result is a completed run where MC and Prometheus/Grafana show the
+temporary loss of one AZ, followed by the `dc-b` members rejoining before the
+run ends.
 
 ## Reports And Logs
 
