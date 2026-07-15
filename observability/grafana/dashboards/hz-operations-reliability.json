@@ -2,7 +2,7 @@
   "uid": "hz-operations-reliability",
   "title": "Operations Reliability",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-5m",
@@ -96,7 +96,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## Hazelcast Operations & Reliability\n\nReliability dashboard for Simulator AP workloads. It tracks operation queues, pending invocations, timeout counters, failed backups, executor queues, event queues, and TCP write pressure.\n\n**Key questions this dashboard answers:**\n- Are operations queued or running longer than expected?\n- Are invocations pending, retrying, or timing out?\n- Are backup failures or backup timeouts appearing during failover?\n- Are executors, event queues, or TCP write queues backing up?\n\n**Simulator context:** during member/DC failover, short spikes are expected; persistent non-zero values after recovery indicate instability."
+        "content": "## Hazelcast Operations & Reliability\n\nReliability dashboard for Simulator AP workloads. It tracks operation queues, pending invocations, timeout counters, failed backups, server-side error signals, executor queues, event queues, and TCP write pressure.\n\n**Key questions this dashboard answers:**\n- Are operations queued or running longer than expected?\n- Are invocations pending, retrying, or timing out?\n- Are backup failures or backup timeouts appearing during failover?\n- Are server-side timeouts, retries, backup failures, or event failures increasing?\n- Are executors, event queues, or TCP write queues backing up?\n\n**Simulator context:** during member/DC failover, short spikes are expected; persistent non-zero values after recovery indicate instability."
       },
       "transparent": true
     },
@@ -510,11 +510,447 @@
     {
       "id": 9,
       "type": "row",
-      "title": "Executors and Events",
+      "title": "Server Error Signals",
       "collapsed": false,
       "gridPos": {
         "x": 0,
         "y": 21,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Operation Timeouts",
+      "description": "Total server-side operation timeout counters across selected members.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_operation_invocations_normalTimeouts{mc_cluster=\"$cluster\", mc_member=~\"$member\"}) + sum(hz_operation_invocations_backupTimeouts{mc_cluster=\"$cluster\", mc_member=~\"$member\"}) + sum(hz_operation_callTimeoutCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"})",
+          "legendFormat": "timeouts",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Operation Retries",
+      "description": "Total operation retry counter across selected members.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 22,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_operation_retryCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"})",
+          "legendFormat": "retries",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Failed Backups",
+      "description": "Total failed backup counter across selected members.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_operation_failedBackups{mc_cluster=\"$cluster\", mc_member=~\"$member\"})",
+          "legendFormat": "failed backups",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Event Errors",
+      "description": "Total event rejection and failure counters across selected members.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 22,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(hz_event_rejectedCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"}) + sum(hz_event_totalFailureCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"})",
+          "legendFormat": "event errors",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Server Error Rate",
+      "description": "Server-side error and retry rates derived from Hazelcast member counters.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_operation_invocations_normalTimeouts{mc_cluster=\"$cluster\", mc_member=~\"$member\"}[$__rate_interval]))",
+          "legendFormat": "normal timeouts/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_operation_invocations_backupTimeouts{mc_cluster=\"$cluster\", mc_member=~\"$member\"}[$__rate_interval]))",
+          "legendFormat": "backup timeouts/s",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_operation_callTimeoutCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"}[$__rate_interval]))",
+          "legendFormat": "call timeouts/s",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_operation_retryCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"}[$__rate_interval]))",
+          "legendFormat": "retries/s",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_operation_failedBackups{mc_cluster=\"$cluster\", mc_member=~\"$member\"}[$__rate_interval]))",
+          "legendFormat": "failed backups/s",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_event_rejectedCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"}[$__rate_interval]))",
+          "legendFormat": "event rejected/s",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(hz_event_totalFailureCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"}[$__rate_interval]))",
+          "legendFormat": "event failures/s",
+          "refId": "G"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 0.001
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Server Error Totals by Member",
+      "description": "Cumulative timeout, retry, failed-backup, event rejection, and event failure counters per member.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (mc_member) (hz_operation_invocations_normalTimeouts{mc_cluster=\"$cluster\", mc_member=~\"$member\"} + hz_operation_invocations_backupTimeouts{mc_cluster=\"$cluster\", mc_member=~\"$member\"} + hz_operation_callTimeoutCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"} + hz_operation_retryCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"} + hz_operation_failedBackups{mc_cluster=\"$cluster\", mc_member=~\"$member\"})",
+          "legendFormat": "{{mc_member}} operation",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (mc_member) (hz_event_rejectedCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"} + hz_event_totalFailureCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"})",
+          "legendFormat": "{{mc_member}} event",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Executors and Events",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 34,
         "w": 24,
         "h": 1
       },
@@ -531,7 +967,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 35,
         "w": 12,
         "h": 8
       },
@@ -587,7 +1023,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 22,
+        "y": 35,
         "w": 12,
         "h": 8
       },
@@ -643,7 +1079,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 43,
         "w": 12,
         "h": 8
       },
@@ -717,7 +1153,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 30,
+        "y": 43,
         "w": 12,
         "h": 8
       },
