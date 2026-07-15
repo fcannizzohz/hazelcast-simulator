@@ -320,7 +320,7 @@ Provision and install with the shared runbook flow. Then choose one member host 
 `dc-b`:
 
 ```bash
-export FAILOVER_HOST=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(next(host for host,data in hosts.items() if data.get("passthrough:dc") == "dc-b"))')
+export FAILOVER_HOST=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(next(host for host,data in hosts.items() if data.get("dc") == "dc-b"))')
 echo "$FAILOVER_HOST"
 ```
 
@@ -366,7 +366,7 @@ This scenario fails the singleton DC in the 2/2/1 layout:
 Choose all member hosts in `dc-c`:
 
 ```bash
-export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("passthrough:dc") == "dc-c"))')
+export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("dc") == "dc-c"))')
 echo "$FAILOVER_HOSTS"
 ```
 
@@ -411,10 +411,10 @@ This scenario uses a stretched 4-member cluster split evenly across two AZs:
 The failover action targets `dc-b` so the load generator, MC, and observability
 host remain available in `dc-a` while the remote AZ is restarted.
 
-Choose all member hosts in `dc-b`:
+To exercise a full AZ failure, choose all member hosts in `dc-b`:
 
 ```bash
-export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("passthrough:dc") == "dc-b"))')
+export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("dc") == "dc-b"))')
 echo "$FAILOVER_HOSTS"
 ```
 
@@ -436,6 +436,33 @@ members from another terminal:
 The expected result is a completed run where MC and Prometheus/Grafana show the
 temporary loss of one AZ, followed by the `dc-b` members rejoining before the
 run ends.
+
+To exercise a smaller member failure instead of a full AZ failure, choose one
+member host from `dc-b`:
+
+```bash
+export FAILOVER_HOST=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; selected=[host for host,data in hosts.items() if data.get("dc") == "dc-b"]; print(selected[0])')
+echo "$FAILOVER_HOST"
+```
+
+Start the 10 minute test in one terminal:
+
+```bash
+./bin/docker-sim perftest run
+```
+
+After the test has been running for at least 60 seconds, restart that single
+member from another terminal:
+
+```bash
+./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOST"
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --dry-run
+./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --yes
+```
+
+The expected result is a completed run where the cluster remains available while
+one member leaves, partition ownership is rebalanced, and the member rejoins
+before the run ends.
 
 ## Reports And Logs
 

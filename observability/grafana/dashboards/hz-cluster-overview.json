@@ -2,13 +2,14 @@
   "uid": "hz-cluster-overview",
   "title": "Cluster Overview",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 3,
   "refresh": "5s",
   "time": {
     "from": "now-5m",
     "to": "now"
   },
-  "timepicker": {},
+  "timepicker": {
+  },
   "tags": [
     "hazelcast",
     "cluster",
@@ -58,7 +59,8 @@
         "allValue": ".*",
         "refresh": 2,
         "hide": 0,
-        "current": {}
+        "current": {
+        }
       }
     ]
   },
@@ -90,7 +92,9 @@
         "w": 24,
         "h": 1
       },
-      "panels": []
+      "panels": [
+
+      ]
     },
     {
       "id": 3,
@@ -151,7 +155,9 @@
           },
           "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       }
     },
     {
@@ -205,7 +211,9 @@
           },
           "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       }
     },
     {
@@ -259,7 +267,9 @@
           },
           "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       }
     },
     {
@@ -313,7 +323,9 @@
           },
           "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       }
     },
     {
@@ -366,7 +378,9 @@
           },
           "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       }
     },
     {
@@ -409,7 +423,9 @@
           },
           "decimals": 2
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "options": {
         "legend": {
@@ -436,7 +452,9 @@
         "w": 24,
         "h": 1
       },
-      "panels": []
+      "panels": [
+
+      ]
     },
     {
       "id": 10,
@@ -478,7 +496,9 @@
           },
           "decimals": 1
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "options": {
         "legend": {
@@ -543,7 +563,308 @@
           },
           "decimals": 2
         },
-        "overrides": []
+        "overrides": [
+
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Member Heap Used",
+      "description": "Used JVM heap for real cluster members only. Clients and lite members are excluded by matching heap metrics to partition ownership metrics.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_memory_usedHeap{mc_cluster=\"$cluster\", mc_member=~\"$member\"} and on (mc_cluster, mc_member) hz_partitions_activePartitionCount{mc_cluster=\"$cluster\", mc_member=~\"$member\"}",
+          "legendFormat": "{{mc_member}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": [
+
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Client Heap Used",
+      "description": "Used JVM heap for client or lite-member processes visible in Management Center. Real members are excluded by removing series that also report partition ownership.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_memory_usedHeap{mc_cluster=\"$cluster\"} unless on (mc_cluster, mc_member) hz_partitions_activePartitionCount{mc_cluster=\"$cluster\"}",
+          "legendFormat": "{{mc_member}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": [
+
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "OS Free Memory by Member",
+      "description": "Free physical memory reported by each member host. Low values indicate host memory pressure even if heap percentage looks acceptable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_os_freePhysicalMemorySize{mc_cluster=\"$cluster\", mc_member=~\"$member\"}",
+          "legendFormat": "{{mc_member}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": [
+
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "HD / Native Memory Usage",
+      "description": "Native or HD memory usage by member when exported by Management Center. Shows zero when the metric family is absent for non-HD workloads.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_memory_usedNativeMemory{mc_cluster=\"$cluster\", mc_member=~\"$member\"} or vector(0)",
+          "legendFormat": "used native",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "hz_memory_maxNativeMemory{mc_cluster=\"$cluster\", mc_member=~\"$member\"} or vector(0)",
+          "legendFormat": "max native",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": [
+
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Map Memory by Map",
+      "description": "Owned plus backup entry memory cost by map. Useful for comparing one-backup and two-backup maps during failover runs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (name) (hz_map_ownedEntryMemoryCost{mc_cluster=\"$cluster\", name!~\"^_.*\"}) + sum by (name) (hz_map_backupEntryMemoryCost{mc_cluster=\"$cluster\", name!~\"^_.*\"})",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": [
+
+        ]
       },
       "options": {
         "legend": {
@@ -570,7 +891,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 29,
+        "y": 53,
         "w": 12,
         "h": 8
       },
@@ -608,7 +929,9 @@
           },
           "decimals": 2
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "options": {
         "legend": {
@@ -635,7 +958,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 29,
+        "y": 53,
         "w": 12,
         "h": 8
       },
@@ -664,7 +987,9 @@
           },
           "decimals": 2
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "options": {
         "legend": {
@@ -687,11 +1012,13 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 61,
         "w": 24,
         "h": 1
       },
-      "panels": []
+      "panels": [
+
+      ]
     },
     {
       "id": 15,
@@ -704,7 +1031,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 38,
+        "y": 62,
         "w": 12,
         "h": 7
       },
@@ -743,7 +1070,9 @@
           },
           "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       }
     },
     {
@@ -757,7 +1086,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 38,
+        "y": 62,
         "w": 12,
         "h": 7
       },
@@ -804,7 +1133,9 @@
           },
           "decimals": 2
         },
-        "overrides": []
+        "overrides": [
+
+        ]
       },
       "options": {
         "legend": {
