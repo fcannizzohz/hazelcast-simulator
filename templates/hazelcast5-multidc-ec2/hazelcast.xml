@@ -10,4 +10,5 @@
       </tcp-ip>
     </join>
   </network>
+  <!--LICENSE-KEY-->
 </hazelcast>
