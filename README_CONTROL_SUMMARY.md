@@ -209,6 +209,60 @@ The existing Simulator artifact download already rsyncs worker directories at th
 of the run, excluding only `upload`, so diagnostics files are collected automatically
 when they exist.
 
+## Grafana Report Dashboards
+
+The `perftest report_grafana` command generates Grafana dashboards from an existing
+Simulator HTML report directory. It is intended for the user experience where a run has
+already completed, `perftest report` has produced a `report/` directory, and the user
+wants Grafana dashboards that emulate the report charts without rerunning the benchmark.
+
+The command takes the report directory as input:
+
+```bash
+perftest report_grafana runs/<run-name>/<timestamp>/report
+```
+
+By default the command:
+
+- reads `report.csv`, `data.csv`, `latency/*.csv`, and `operations/*.csv`
+- creates a Grafana folder named after the report timestamp
+- creates or reuses a TestData datasource named `Simulator Report TestData`
+- imports generated dashboards through the Grafana HTTP API
+- prints the generated dashboard URLs
+
+The generated dashboards are grouped by the report timestamp and currently include:
+
+- a summary dashboard derived from `report.csv`
+- latency dashboards derived from report latency CSV files
+- operation throughput dashboards derived from `operations/*.csv`
+- system resource dashboards derived from dstat columns in `data.csv`
+
+Each chart includes a description explaining what the chart shows and how to interpret
+it. The embedded TestData CSV uses the long form `time,metric,value`, so Grafana sees a
+stable numeric `value` field for time-series panels.
+
+If Grafana cannot be inferred from `inventory.yaml`, provide it explicitly:
+
+```bash
+perftest report_grafana runs/<run-name>/<timestamp>/report --grafana-url http://<grafana-host>:3000
+```
+
+To generate JSON files without installing them in Grafana:
+
+```bash
+perftest report_grafana runs/<run-name>/<timestamp>/report --no-install --output-dir /tmp/report-dashboards
+```
+
+To update dashboards that were already imported, rerun with `--overwrite`:
+
+```bash
+perftest report_grafana runs/<run-name>/<timestamp>/report --overwrite
+```
+
+No Grafana restart is required when the command imports dashboards through the HTTP API.
+If the command is run through a Docker image that contains an older simulator checkout,
+rebuild or refresh that image before rerunning the command.
+
 ## What Was Proven
 
 The implementation was validated on managed AWS projects from a laptop using the normal
