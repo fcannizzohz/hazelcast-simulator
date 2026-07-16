@@ -102,24 +102,30 @@ class ReportGrafanaCommand:
 class ReportData:
 
     def __init__(self, report_path):
-        self.path = Path(report_path).expanduser().resolve()
-        if not self.path.is_dir():
-            exit_with_error(f"Report path [{self.path}] does not exist or is not a directory.")
-        if not (self.path / "report.csv").exists():
-            exit_with_error(f"Report path [{self.path}] does not contain report.csv.")
+        self.input_path = Path(report_path).expanduser().resolve()
+        if not self.input_path.is_dir():
+            exit_with_error(f"Report path [{self.input_path}] does not exist or is not a directory.")
+        if (self.input_path / "report").is_dir():
+            self.run_path = self.input_path
+            self.path = self.input_path / "report"
+        else:
+            self.path = self.input_path
+            self.run_path = self.input_path.parent
         self.timestamp = self._timestamp()
 
     def _timestamp(self):
-        parent = self.path.parent.name
-        if re.match(r"^\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2}$", parent):
-            return parent
-        with open(self.path / "report.csv", newline="") as file:
-            rows = list(csv.DictReader(file))
+        candidates = [self.run_path.name, self.path.parent.name, self.input_path.name]
+        for candidate in candidates:
+            if re.match(r"^\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2}$", candidate):
+                return candidate
+        rows = self.report_rows()
         if rows and rows[0].get("run_label"):
             return sanitize_title(rows[0]["run_label"])
-        return sanitize_title(parent or self.path.name)
+        return sanitize_title(self.input_path.name or self.path.name)
 
     def report_rows(self):
+        if not (self.path / "report.csv").exists():
+            return []
         with open(self.path / "report.csv", newline="") as file:
             return list(csv.DictReader(file))
 
@@ -139,6 +145,30 @@ class ReportData:
                 return next(reader)
             except StopIteration:
                 return []
+
+    def worker_log_errors(self, max_entries=200):
+        patterns = re.compile(r"\b(ERROR|FATAL|SEVERE|WARN)\b|Exception|Error", re.IGNORECASE)
+        entries = []
+        for path in sorted(self.run_path.rglob("worker.log")):
+            with open(path, errors="replace") as file:
+                for line_number, line in enumerate(file, start=1):
+                    text = line.rstrip()
+                    if not patterns.search(text):
+                        continue
+                    entries.append({
+                        "worker": path.parent.name,
+                        "line": line_number,
+                        "text": text,
+                    })
+                    if len(entries) >= max_entries:
+                        return entries
+        return entries
+
+    def failures_text(self):
+        path = self.run_path / "failures.txt"
+        if not path.exists():
+            return ""
+        return path.read_text(errors="replace")
 
 
 class ReportDashboardGenerator:
@@ -160,10 +190,19 @@ class ReportDashboardGenerator:
         system = self.system_dashboard()
         if system is not None:
             dashboards.append(system)
+        errors = self.errors_dashboard()
+        if errors is not None:
+            dashboards.append(errors)
         return dashboards
 
     def summary_dashboard(self):
         rows = self.report.report_rows()
+        report_summary = report_rows_to_markdown(rows)
+        if not rows:
+            report_summary = (
+                f"`report.csv` was not found under `{self.report.path}`.\n\n"
+                "The run appears incomplete, so this command generated dashboards from the files that were available."
+            )
         panels = [
             text_panel(
                 1,
@@ -173,12 +212,13 @@ class ReportDashboardGenerator:
                 24,
                 7,
                 f"## Simulator Report Summary\n\n"
-                f"Generated from `{self.report.path}`.\n\n"
+                f"Input: `{self.report.input_path}`.\n\n"
+                f"Report data directory: `{self.report.path}`.\n\n"
                 "Use this dashboard to identify the tested benchmarks, compare throughput, "
                 "and spot latency-tail outliers. High p99/max with stable average latency usually means "
                 "short disruption windows or intermittent stalls rather than constant slowness."
             ),
-            text_panel(2, "Run Summary", 0, 7, 24, 9, report_rows_to_markdown(rows)),
+            text_panel(2, "Run Summary", 0, 7, 24, 9, report_summary),
         ]
         return dashboard(
             uid=f"{self.uid_prefix}-summary",
@@ -208,6 +248,8 @@ class ReportDashboardGenerator:
         if not selected:
             selected = files[:12]
 
+        total_files = comparable_latency_files(files, "Total_")
+        int_files = comparable_latency_files(files, "Int_")
         panels = [
             text_panel(
                 1,
@@ -223,7 +265,37 @@ class ReportDashboardGenerator:
                 "indicates broad latency degradation."
             )
         ]
-        panels.extend(csv_panels(selected, first_id=2, start_y=6, unit="µs"))
+        panel_id = 2
+        if total_files:
+            panels.append(csv_files_panel(
+                panel_id,
+                "All Total Latency Metrics",
+                total_files,
+                0,
+                6,
+                12 if int_files else 24,
+                8,
+                "short",
+                "All `Total_*` series from the report latency directory. Use this to compare run-level mean, percentile, max, count, and throughput trends in one place.",
+                include_file_names=True,
+            ))
+            panel_id += 1
+        if int_files:
+            panels.append(csv_files_panel(
+                panel_id,
+                "All Interval Latency Metrics",
+                int_files,
+                12 if total_files else 0,
+                6,
+                12 if total_files else 24,
+                8,
+                "short",
+                "All `Int_*` series from the report latency directory. Use this to identify short-lived stalls and recovery behavior inside the run.",
+                include_file_names=True,
+            ))
+            panel_id += 1
+
+        panels.extend(csv_panels(selected, first_id=panel_id, start_y=14 if total_files or int_files else 6, unit="µs"))
         return dashboard(
             uid=f"{self.uid_prefix}-latency",
             title=f"{self.folder_title} - Latency",
@@ -295,6 +367,34 @@ class ReportDashboardGenerator:
         return dashboard(
             uid=f"{self.uid_prefix}-system",
             title=f"{self.folder_title} - System",
+            panels=panels,
+        )
+
+    def errors_dashboard(self):
+        worker_errors = self.report.worker_log_errors()
+        failures = self.report.failures_text()
+        if not worker_errors and not failures:
+            return None
+
+        panels = [
+            text_panel(
+                1,
+                "",
+                0,
+                0,
+                24,
+                5,
+                "## Worker Errors\n\n"
+                "This dashboard is generated from available `worker.log` files and `failures.txt` when present. "
+                "Use it when the normal HTML report is incomplete: startup failures and worker-side exceptions often explain why latency or operations charts are missing."
+            ),
+            text_panel(2, "Worker Log Errors", 0, 5, 24, 12, worker_errors_to_markdown(worker_errors)),
+        ]
+        if failures:
+            panels.append(text_panel(3, "Simulator Failures", 0, 17, 24, 10, fenced_text(failures, 12000)))
+        return dashboard(
+            uid=f"{self.uid_prefix}-errors",
+            title=f"{self.folder_title} - Errors",
             panels=panels,
         )
 
@@ -429,14 +529,18 @@ def csv_panels(files, first_id, start_y, unit):
 
 def csv_file_panel(panel_id, path, x, y, unit):
     title = Path(path).stem.replace("_", " ")
+    return csv_files_panel(panel_id, title, [path], x, y, 12, 8, unit, chart_description(title))
+
+
+def csv_files_panel(panel_id, title, files, x, y, w, h, unit, description, include_file_names=False):
     return {
         "id": panel_id,
         "type": "timeseries",
         "title": title,
-        "description": chart_description(title),
+        "description": description,
         "datasource": testdata_datasource(),
-        "gridPos": {"x": x, "y": y, "w": 12, "h": 8},
-        "targets": [csv_target("A", time_metric_value_csv_content(path))],
+        "gridPos": {"x": x, "y": y, "w": w, "h": h},
+        "targets": [csv_target("A", time_metric_value_csv_content(files, include_file_names))],
         "fieldConfig": {
             "defaults": {
                 "unit": unit,
@@ -511,18 +615,28 @@ def csv_content_transformations():
     ]
 
 
-def time_metric_value_csv_content(path):
-    with open(path, newline="") as file:
-        rows = list(csv.reader(file))
-    if not rows:
-        return empty_metric_csv()
-    header = rows[0]
-    if len(header) < 2:
-        return empty_metric_csv()
+def time_metric_value_csv_content(paths, include_file_names=False):
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
 
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow(["time", "metric", "value"])
+    for path in paths:
+        append_time_metric_value_csv(writer, path, include_file_names)
+    return output.getvalue()
+
+
+def append_time_metric_value_csv(writer, path, include_file_name):
+    with open(path, newline="") as file:
+        rows = list(csv.reader(file))
+    if not rows:
+        return
+    header = rows[0]
+    if len(header) < 2:
+        return
+
+    file_metric = Path(path).stem.replace("_", " ")
     for row in rows[1:]:
         if not row:
             continue
@@ -530,8 +644,8 @@ def time_metric_value_csv_content(path):
         for index, metric in enumerate(header[1:], start=1):
             if index >= len(row) or not is_number(row[index]):
                 continue
-            writer.writerow([timestamp, metric, row[index]])
-    return output.getvalue()
+            label = file_metric if include_file_name else metric
+            writer.writerow([timestamp, label, row[index]])
 
 
 def data_csv_content(columns):
@@ -592,6 +706,28 @@ def report_rows_to_markdown(rows):
     return "\n".join(result)
 
 
+def worker_errors_to_markdown(entries):
+    if not entries:
+        return "No matching error lines were found in `worker.log` files."
+    result = ["| Worker | Line | Message |", "| --- | ---: | --- |"]
+    for entry in entries:
+        result.append(
+            f"| {markdown_escape(entry['worker'])} | {entry['line']} | `{markdown_escape(entry['text'])}` |"
+        )
+    return "\n".join(result)
+
+
+def fenced_text(value, max_chars):
+    text = value
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n... truncated ..."
+    return "```text\n" + text.replace("```", "` ` `") + "\n```"
+
+
+def markdown_escape(value):
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
 def select_metric_files(files, preferred_prefixes):
     selected = []
     for prefix in preferred_prefixes:
@@ -605,6 +741,19 @@ def select_metric_files(files, preferred_prefixes):
         result.append(item)
         seen.add(item)
     return result[:16]
+
+
+def comparable_latency_files(files, prefix):
+    return [
+        path
+        for path in files
+        if path.name.startswith(prefix) and is_comparable_latency_metric(path.stem[len(prefix):])
+    ]
+
+
+def is_comparable_latency_metric(metric_name):
+    metric = metric_name.split("_", 1)[0]
+    return metric in {"Mean", "Min", "Max", "Std", "p25", "p50", "p75", "p90", "p99.9", "p99.99", "p99.999", "p99"}
 
 
 def chart_description(title):

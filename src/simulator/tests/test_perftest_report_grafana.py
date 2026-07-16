@@ -54,6 +54,38 @@ class TestPerftestReportGrafana(unittest.TestCase):
                 self.assertTrue(row[0].endswith("Z"))
                 float(row[2])
 
+    def test_latency_dashboard_starts_with_total_and_interval_aggregate_panels(self):
+        with synthetic_report() as report_dir:
+            report = ReportData(report_dir)
+            dashboards = ReportDashboardGenerator(report, "Simulator Report 16-07-2026_08-23-37").generate()
+
+        latency = next(dashboard for dashboard in dashboards if dashboard["title"].endswith(" - Latency"))
+        self.assertEqual("All Total Latency Metrics", latency["panels"][1]["title"])
+        self.assertEqual("All Interval Latency Metrics", latency["panels"][2]["title"])
+        self.assertIn("Total p99 one backup.get", latency["panels"][1]["targets"][0]["csvContent"])
+        self.assertIn("Int Mean one backup.get", latency["panels"][2]["targets"][0]["csvContent"])
+        self.assertNotIn("Total Count one backup.get", latency["panels"][1]["targets"][0]["csvContent"])
+        self.assertNotIn("Total Throughput one backup.get", latency["panels"][1]["targets"][0]["csvContent"])
+        self.assertNotIn("Int Count one backup.get", latency["panels"][2]["targets"][0]["csvContent"])
+        self.assertNotIn("Int Throughput one backup.get", latency["panels"][2]["targets"][0]["csvContent"])
+
+    def test_incomplete_run_directory_generates_available_dashboards_and_errors(self):
+        with synthetic_incomplete_run() as run_dir:
+            report = ReportData(run_dir)
+            dashboards = ReportDashboardGenerator(report, "Simulator Report 15-07-2026_11-43-48").generate()
+
+        titles = [dashboard["title"] for dashboard in dashboards]
+        self.assertIn("Simulator Report 15-07-2026_11-43-48 - Summary", titles)
+        self.assertIn("Simulator Report 15-07-2026_11-43-48 - System", titles)
+        self.assertIn("Simulator Report 15-07-2026_11-43-48 - Errors", titles)
+        self.assertNotIn("Simulator Report 15-07-2026_11-43-48 - Latency", titles)
+        self.assertNotIn("Simulator Report 15-07-2026_11-43-48 - Operations", titles)
+
+        summary = next(dashboard for dashboard in dashboards if dashboard["title"].endswith(" - Summary"))
+        errors = next(dashboard for dashboard in dashboards if dashboard["title"].endswith(" - Errors"))
+        self.assertIn("report.csv", summary["panels"][1]["options"]["content"])
+        self.assertIn("MissingLicenseException", errors["panels"][1]["options"]["content"])
+
     def test_no_install_writes_dashboard_json(self):
         with synthetic_report() as report_dir:
             output_dir = Path(report_dir) / "out"
@@ -140,6 +172,31 @@ class synthetic_report:
             ["1970-01-01 00:00:00", "1000"],
             ["1970-01-01 00:00:01", "1010"],
         ])
+        write_csv(base / "latency" / "Total_Count_one_backup.get.csv", [
+            ["time", "16-07-2026_08-23-37"],
+            ["1970-01-01 00:00:00", "10"],
+            ["1970-01-01 00:00:01", "11"],
+        ])
+        write_csv(base / "latency" / "Total_Throughput_one_backup.get.csv", [
+            ["time", "16-07-2026_08-23-37"],
+            ["1970-01-01 00:00:00", "42000"],
+            ["1970-01-01 00:00:01", "42100"],
+        ])
+        write_csv(base / "latency" / "Int_Mean_one_backup.get.csv", [
+            ["time", "16-07-2026_08-23-37"],
+            ["1970-01-01 00:00:00", "800"],
+            ["1970-01-01 00:00:01", "810"],
+        ])
+        write_csv(base / "latency" / "Int_Count_one_backup.get.csv", [
+            ["time", "16-07-2026_08-23-37"],
+            ["1970-01-01 00:00:00", "10"],
+            ["1970-01-01 00:00:01", "11"],
+        ])
+        write_csv(base / "latency" / "Int_Throughput_one_backup.get.csv", [
+            ["time", "16-07-2026_08-23-37"],
+            ["1970-01-01 00:00:00", "42000"],
+            ["1970-01-01 00:00:01", "42100"],
+        ])
         write_csv(base / "operations" / "throughput.csv", [
             ["time", "16-07-2026_08-23-37"],
             ["1970-01-01 00:00:00", "42000"],
@@ -156,6 +213,36 @@ class synthetic_report:
             ["1970-01-01 00:00:01", "110", "190", "20"],
         ])
         self.report_dir = base
+        return str(base)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.tmpdir.cleanup()
+
+
+class synthetic_incomplete_run:
+
+    def __enter__(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        base = Path(self.tmpdir.name) / "runs" / "sample" / "15-07-2026_11-43-48"
+        report = base / "report"
+        worker = base / "A1_W1-127.0.0.1-member"
+        report.mkdir(parents=True)
+        worker.mkdir()
+        write_csv(report / "data.csv", [
+            [
+                "time",
+                "dstat::used::run_label==15-07-2026_11-43-48::agent_id==A1",
+                "dstat::free::run_label==15-07-2026_11-43-48::agent_id==A1",
+            ],
+            ["1970-01-01 00:00:00", "100", "200"],
+        ])
+        (worker / "worker.log").write_text(
+            "11:44:06.260 [main] WARN  com.hazelcast.simulator.utils.ExceptionReporter - Exception #1 detected\n"
+            "com.hazelcast.license.exception.MissingLicenseException: The Hazelcast Enterprise license key is not set.\n"
+            "11:44:06.268 [main] FATAL com.hazelcast.simulator.worker.Worker - Failed to start Hazelcast Simulator Worker!\n"
+        )
+        (base / "failures.txt").write_text("Failure[\n   message='Failed to start worker [A1_W1]'\n]\n")
+        self.run_dir = base
         return str(base)
 
     def __exit__(self, exc_type, exc_value, traceback):
