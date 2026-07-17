@@ -5,7 +5,6 @@ import argparse
 
 from simulator.perftest import PerftestCreateCli, PerftestCloneCli, PerftestRunCli, \
     PerftestKillJavaCli, PerftestCollectCli, PerftestCleanCli
-from simulator.perftest_report import PerfTestReportCli
 
 usage = '''perftest <command> [<args>]
 
@@ -55,6 +54,8 @@ class PerftestCli:
         PerftestCollectCli(sys.argv[2:])
 
     def report(self):
+        from simulator.perftest_report import PerfTestReportCli
+
         PerfTestReportCli(sys.argv[2:])
 
 
