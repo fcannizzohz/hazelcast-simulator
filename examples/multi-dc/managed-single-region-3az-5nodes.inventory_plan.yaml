@@ -1,0 +1,77 @@
+provisioner: terraform
+terraform_plan: aws
+
+basename: my-single-region-3az-multidc
+owner: my-team
+
+team: Cloud
+type: Other
+extraTags: {}
+
+primary_dc: dc-a
+mc_dc: dc-a
+observability_dc: dc-a
+
+keypair:
+    public_key: key.pub
+    private_key: key
+
+nodes:
+    instance_type: c5d.4xlarge
+    ami: ami-03ceeb33c1e4abcd1
+    user: ubuntu
+    tenancy: null
+
+loadgenerators:
+    instance_type: c5d.xlarge
+    ami: ami-03ceeb33c1e4abcd1
+    user: ubuntu
+    tenancy: null
+
+mc:
+    instance_type: c5d.xlarge
+    count: 1
+    ami: ami-03ceeb33c1e4abcd1
+    user: ubuntu
+    tenancy: null
+
+observability:
+    instance_type: c5d.xlarge
+    count: 1
+    ami: ami-03ceeb33c1e4abcd1
+    user: ubuntu
+    tenancy: null
+
+dcs:
+    - name: dc-a
+      region: eu-west-2
+      availability_zone: eu-west-2a
+      vpc_id: vpc-aaaaaaaaaaaaaaaaa
+      internet_gateway_id: igw-aaaaaaaaaaaaaaaaa
+      cidr_block: 172.31.88.0/24
+      nodes:
+          count: 2
+      loadgenerators:
+          count: 1
+
+    - name: dc-b
+      region: eu-west-2
+      availability_zone: eu-west-2b
+      vpc_id: vpc-aaaaaaaaaaaaaaaaa
+      internet_gateway_id: igw-aaaaaaaaaaaaaaaaa
+      cidr_block: 172.31.89.0/24
+      nodes:
+          count: 2
+      loadgenerators:
+          count: 0
+
+    - name: dc-c
+      region: eu-west-2
+      availability_zone: eu-west-2c
+      vpc_id: vpc-aaaaaaaaaaaaaaaaa
+      internet_gateway_id: igw-aaaaaaaaaaaaaaaaa
+      cidr_block: 172.31.90.0/24
+      nodes:
+          count: 1
+      loadgenerators:
+          count: 0
