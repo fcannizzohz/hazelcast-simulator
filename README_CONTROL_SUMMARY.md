@@ -212,16 +212,13 @@ when they exist.
 ## Grafana Report Dashboards
 
 The `perftest report_grafana` command generates Grafana dashboards from an existing
-Simulator run or HTML report directory. It is intended for the user experience where a
-run has already completed, `perftest report` has produced a `report/` directory, and
-the user wants Grafana dashboards that emulate the report charts without rerunning the
-benchmark.
+Simulator HTML report directory. It is intended for the user experience where a run has
+already completed, `perftest report` has produced a `report/` directory, and the user
+wants Grafana dashboards that emulate the report charts without rerunning the benchmark.
 
-The command takes either the run timestamp directory or the nested report directory as
-input:
+The command takes the report directory as input:
 
 ```bash
-perftest report_grafana runs/<run-name>/<timestamp>
 perftest report_grafana runs/<run-name>/<timestamp>/report
 ```
 
@@ -239,19 +236,10 @@ The generated dashboards are grouped by the report timestamp and currently inclu
 - latency dashboards derived from report latency CSV files
 - operation throughput dashboards derived from `operations/*.csv`
 - system resource dashboards derived from dstat columns in `data.csv`
-- an errors dashboard derived from `worker.log` files and `failures.txt` when worker
-  errors are present
 
 Each chart includes a description explaining what the chart shows and how to interpret
 it. The embedded TestData CSV uses the long form `time,metric,value`, so Grafana sees a
 stable numeric `value` field for time-series panels.
-
-Incomplete runs are supported. If `report.csv`, latency CSV files, or operation CSV
-files are missing, the command skips those dashboards and still imports dashboards for
-the data it can find. For example, a failed startup run that only contains
-`report/data.csv` and worker directories will still produce summary, system, and errors
-dashboards. The errors dashboard extracts matching `WARN`, `ERROR`, `FATAL`, `SEVERE`,
-`Exception`, and `Error` lines from available `worker.log` files.
 
 If Grafana cannot be inferred from `inventory.yaml`, provide it explicitly:
 

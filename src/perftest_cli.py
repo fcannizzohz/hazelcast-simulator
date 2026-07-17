@@ -3,9 +3,6 @@ import os
 import sys
 import argparse
 
-from simulator.perftest import PerftestCreateCli, PerftestCloneCli, PerftestRunCli, \
-    PerftestKillJavaCli, PerftestCollectCli, PerftestCleanCli
-
 usage = '''perftest <command> [<args>]
 
 The available commands are:
@@ -15,6 +12,7 @@ The available commands are:
     run         Runs a tests.yaml which is a self contained set of tests
     kill_java   Kills all Java processes   
     report      Generate performance report 
+    report_grafana Generate Grafana dashboards from a performance report
 '''
 
 
@@ -36,27 +34,44 @@ class PerftestCli:
         getattr(self, args.command)()
 
     def create(self):
+        from simulator.perftest import PerftestCreateCli
+
         PerftestCreateCli(sys.argv[2:])
 
     def clean(self):
+        from simulator.perftest import PerftestCleanCli
+
         PerftestCleanCli(sys.argv[2:])
 
     def clone(self):
+        from simulator.perftest import PerftestCloneCli
+
         PerftestCloneCli(sys.argv[2:])
 
     def run(self):
+        from simulator.perftest import PerftestRunCli
+
         PerftestRunCli(sys.argv[2:])
 
     def kill_java(self):
+        from simulator.perftest import PerftestKillJavaCli
+
         PerftestKillJavaCli(sys.argv[2:])
 
     def collect(self):
+        from simulator.perftest import PerftestCollectCli
+
         PerftestCollectCli(sys.argv[2:])
 
     def report(self):
         from simulator.perftest_report import PerfTestReportCli
 
         PerfTestReportCli(sys.argv[2:])
+
+    def report_grafana(self):
+        from simulator.perftest_report_grafana import PerftestReportGrafanaCli
+
+        PerftestReportGrafanaCli(sys.argv[2:])
 
 
 if __name__ == '__main__':
