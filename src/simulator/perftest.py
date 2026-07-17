@@ -169,7 +169,7 @@ class PerfTest:
             if not key == 'test':
                 coordinator_params[key] = value
         # Add member user to worker parameters
-        hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!load_balancers")
+        hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!observability:!load_balancers")
         if hosts:
             user = ssh_user(hosts[0])
             coordinator_params['members_user'] = user
@@ -210,7 +210,7 @@ class PerfTest:
 
             self.exitcode = self.__shell(f"{simulator_home}/bin/hidden/coordinator {coordinator_param} {tmp.name}")
             del test['run_path']
-            hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!load_balancers")
+            hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!observability:!load_balancers")
             agents_download(hosts, run_path, test['RUN_ID'])
             agents_clean(hosts)
 
@@ -272,13 +272,13 @@ class PerfTest:
 
         node_hosts = test.get('node_hosts', 'all')
         if not node_hosts:
-            node_hosts = "all|!mc:!load_balancers"
+            node_hosts = "all|!mc:!observability:!load_balancers"
             test['node_hosts'] = node_hosts
         self.verify_hosts(node_hosts)
 
         loadgenerator_hosts = test.get('loadgenerator_hosts')
         if not loadgenerator_hosts:
-            loadgenerator_hosts = "all|!mc:!load_balancers"
+            loadgenerator_hosts = "all|!mc:!observability:!load_balancers"
             test['loadgenerator_hosts'] = loadgenerator_hosts
         self.verify_hosts(loadgenerator_hosts)
 
@@ -288,7 +288,7 @@ class PerfTest:
 
         loadbalancer_hosts = test.get('loadbalancer_hosts', 'all')
         if not loadbalancer_hosts:
-            loadbalancer_hosts = "all|!mc"
+            loadbalancer_hosts = "all|!mc:!observability"
             test['loadbalancer_hosts'] = loadbalancer_hosts
 
         if test.get("duration") is None:
@@ -308,7 +308,7 @@ class PerfTest:
 
     def clean(self):
         # the !mc pattern is very ugly
-        hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!load_balancers")
+        hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!observability:!load_balancers")
         agents_clean(hosts)
 
     def __shell(self, cmd):
@@ -513,7 +513,7 @@ class PerftestRunCli:
                                  "A Git repo will automatically be created if one doesn't exist.")
 
         parser.add_argument('-k', '--kill_java', nargs=1, default=[True], type=bool,
-                            help='If all the Java processes should be killed before running using hosts all:!mc')
+                            help='If all the Java processes should be killed before running using hosts all:!mc:!observability')
 
         parser.add_argument('-t', '--tag', metavar="KEY=VALUE", nargs=1, action='append')
 
@@ -553,7 +553,7 @@ class PerftestKillJavaCli:
     def __init__(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Kills all Java processes')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability")
         args = parser.parse_args(argv)
 
         hosts = args.hosts

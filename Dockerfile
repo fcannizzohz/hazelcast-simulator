@@ -57,7 +57,7 @@ RUN --mount=type=bind,source=requirements.txt,target=/tmp/requirements.txt \
     python${PYTHON_VERSION} -m pip install --no-cache-dir --break-system-packages --ignore-installed -r /tmp/requirements.txt
 
 # Create simulator directory structure
-RUN mkdir -p /opt/simulator/lib /opt/simulator/drivers /opt/simulator/src /opt/simulator/templates /opt/simulator/conf /opt/simulator/playbooks /opt/simulator/bin /opt/simulator/user-lib
+RUN mkdir -p /opt/simulator/lib /opt/simulator/drivers /opt/simulator/src /opt/simulator/templates /opt/simulator/conf /opt/simulator/playbooks /opt/simulator/observability /opt/simulator/bin /opt/simulator/user-lib
 
 # Copy pre-built Java artifacts (lib and drivers directories)
 COPY lib/ /opt/simulator/lib/
@@ -69,6 +69,7 @@ COPY src/ /opt/simulator/src/
 COPY templates/ /opt/simulator/templates/
 COPY conf/ /opt/simulator/conf/
 COPY playbooks/ /opt/simulator/playbooks/
+COPY observability/ /opt/simulator/observability/
 
 # Copy bin directory containing Java executables (coordinator, agent, etc.)
 COPY bin/ /opt/simulator/bin/

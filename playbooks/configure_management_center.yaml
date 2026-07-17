@@ -1,0 +1,76 @@
+---
+- hosts: all
+
+  vars:
+    cluster_name: workers
+    member_addresses: null
+    mc_dir: ~{{ console_user | default(ansible_user) }}
+
+  tasks:
+  - name: Validate Management Center member addresses
+    fail:
+      msg: "member_addresses is required, for example 10.0.10.10:5701,10.0.10.11:5701"
+    when: member_addresses is not defined or member_addresses | length == 0
+
+  - name: Validate Management Center cluster name
+    fail:
+      msg: "cluster_name is required, for example workers"
+    when: cluster_name is not defined or cluster_name | length == 0
+
+  - name: Stop Management Center
+    shell: |
+      set -e
+      pkill -f '[h]azelcast-management-center' || true
+      pkill -f '[h]z-mc.*start' || true
+      sleep 5
+
+  - name: Configure Management Center cluster connection
+    shell: |
+      set -e
+      MC_INSTALL_DIR="$(find {{ mc_dir }} -maxdepth 1 -type d -name 'hazelcast-management-center-*' | sort -V | tail -n 1)"
+      if [ -z "$MC_INSTALL_DIR" ]; then
+        echo "Could not find hazelcast-management-center installation under {{ mc_dir }}" >&2
+        exit 1
+      fi
+
+      export MC_HOME="$HOME/hazelcast-mc"
+      mkdir -p "$MC_HOME"
+      rm -f "$MC_HOME/mc.lock"
+
+      "$MC_INSTALL_DIR/bin/hz-mc" conf cluster add -cn="{{ cluster_name }}" -ma="{{ member_addresses }}" --force
+
+  - name: Start Management Center
+    shell: |
+      set -e
+      MC_INSTALL_DIR="$(find {{ mc_dir }} -maxdepth 1 -type d -name 'hazelcast-management-center-*' | sort -V | tail -n 1)"
+      if [ -z "$MC_INSTALL_DIR" ]; then
+        echo "Could not find hazelcast-management-center installation under {{ mc_dir }}" >&2
+        exit 1
+      fi
+
+      export MC_HOME="$HOME/hazelcast-mc"
+      export MC_PROMETHEUS_EXPORTER_ENABLED=true
+      export MC_PROMETHEUS_EXPORTER_TIMESTAMP_ENABLED=false
+      export MC_PROMETHEUS_EXPORTER_PRINTERS=V1
+      JAVA_OPTS='-Dhazelcast.mc.prometheusExporter.enabled=true -Dhazelcast.mc.prometheusExporter.timestamp.enabled=false -Dhazelcast.mc.prometheusExporter.printers=V1'
+      LICENSE_STATUS=not_set
+      if [ -n "${HZ_LICENSEKEY:-}" ]; then
+        LICENSE_STATUS=set
+        export MC_LICENSE="${HZ_LICENSEKEY}"
+        JAVA_OPTS="$JAVA_OPTS -Dhazelcast.mc.license=${HZ_LICENSEKEY}"
+      fi
+      export JAVA_OPTS
+      {
+        echo "MC_INSTALL_DIR=$MC_INSTALL_DIR"
+        echo "MC_HOME=$MC_HOME"
+        echo "MC_PROMETHEUS_EXPORTER_ENABLED=$MC_PROMETHEUS_EXPORTER_ENABLED"
+        echo "MC_PROMETHEUS_EXPORTER_TIMESTAMP_ENABLED=$MC_PROMETHEUS_EXPORTER_TIMESTAMP_ENABLED"
+        echo "MC_PROMETHEUS_EXPORTER_PRINTERS=$MC_PROMETHEUS_EXPORTER_PRINTERS"
+        echo "MC_LICENSE=$LICENSE_STATUS"
+        printf 'JAVA_OPTS=%s\n' "$JAVA_OPTS" | sed -E 's/(hazelcast.mc.license=)[^ ]+/\1<redacted>/g'
+        printf 'START_COMMAND=nohup %s/bin/start.sh > %s/mc.out 2>&1 &\n' "$MC_INSTALL_DIR" "$HOME"
+      } > /tmp/j
+      nohup "$MC_INSTALL_DIR/bin/start.sh" > "$HOME/mc.out" 2>&1 &
+    environment:
+      HZ_LICENSEKEY: "{{ lookup('env', 'HZ_LICENSEKEY') | default('', true) }}"
+    no_log: "{{ (lookup('env', 'HZ_LICENSEKEY') | default('', true) | length) > 0 }}"

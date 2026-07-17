@@ -1,0 +1,59 @@
+groups:
+  - name: hz_cp_subsystem
+    interval: 30s
+    rules:
+
+      # ── Recording rules ──────────────────────────────────────────────────
+
+      # Commit lag per (group, member): how far behind lastApplied is from commitIndex
+      - record: hz:cp_group:commit_lag
+        expr: >
+          hz_raft_group_commitIndex - hz_raft_group_lastApplied
+
+      # Term increase rate: a spike indicates a leader election
+      - record: hz:cp_group:term_increase_rate
+        expr: >
+          rate(hz_raft_group_term[5m])
+
+      # Rate at which new entries are being committed
+      - record: hz:cp_group:commit_rate
+        expr: >
+          rate(hz_raft_group_commitIndex[1m])
+
+      # ── Alerting rules ───────────────────────────────────────────────────
+
+      - alert: CPMemberDown
+        expr: up{job="hazelcast"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Hazelcast CP member {{ $labels.member }} is down"
+          description: "Member {{ $labels.member }} has been unreachable for >30s. With group-size=3, losing 2 members makes CP groups unavailable."
+
+      - alert: CPMissingMembers
+        expr: hz_raft_missingMembers > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} missing CP member(s) detected"
+          description: "hz_raft_missingMembers={{ $value }}. CP groups may be running below quorum."
+
+      - alert: CPGroupLeaderElection
+        expr: increase(hz_raft_group_term[5m]) > 0
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "CP group {{ $labels.group }} elected a new leader"
+          description: "Term increased by {{ $value }} in the last 5m – a leader election occurred."
+
+      - alert: CPGroupHighCommitLag
+        expr: hz:cp_group:commit_lag > 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CP group {{ $labels.group }} has high commit lag"
+          description: "commitIndex - lastApplied = {{ $value }}. A follower may be falling behind."

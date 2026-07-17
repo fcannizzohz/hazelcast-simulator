@@ -2,8 +2,11 @@
 import os
 import sys
 import argparse
+import json
+import shlex
 from os import path
 
+from inventory import load_hosts
 from simulator.control import InventoryControlCli
 from simulator.inventory_terraform import terraform_import, terraform_destroy, terraform_apply
 from simulator.inventory_lab import lab_apply, lab_destroy
@@ -32,6 +35,10 @@ The available commands are:
 
 
 default_url = "https://download.java.net/java/GA/jdk21/fd2272bbf8e04c3dbaee13770090416c/35/GPL/openjdk-21_linux-x64_bin.tar.gz"
+
+
+def ansible_extra_vars(**kwargs):
+    return shlex.quote(json.dumps(kwargs))
 
 examples = """
 Oracle JDK:
@@ -128,6 +135,53 @@ Microsoft
 """
 
 
+def require_inventory_hosts(host_pattern, role):
+    hosts = load_hosts(host_pattern=host_pattern)
+    if not hosts:
+        exit_with_error(
+            f"No hosts matched [{host_pattern}] for {role}. "
+            "Provision the observability inventory group before installing observability."
+        )
+    return hosts
+
+
+def require_single_inventory_host(host_pattern, role):
+    hosts = load_hosts(host_pattern=host_pattern)
+    if not hosts:
+        exit_with_error(
+            f"No hosts matched [{host_pattern}] for {role}. "
+            "Set mc.count: 1 in inventory_plan.yaml, run inventory apply, and rerun this command."
+        )
+    if len(hosts) > 1:
+        exit_with_error(f"Expected exactly one {role} host for [{host_pattern}], found {len(hosts)}.")
+    return hosts[0]
+
+
+def management_center_metrics_target(host):
+    address = host.get("private_ip") or host.get("public_ip")
+    if not address:
+        exit_with_error("Management Center host does not have a private_ip or public_ip in inventory.yaml.")
+    return f"{address}:8080"
+
+
+def public_endpoint(host, port, role):
+    address = host.get("public_ip") or host.get("private_ip")
+    if not address:
+        exit_with_error(f"{role} host does not have a public_ip or private_ip in inventory.yaml.")
+    return f"http://{address}:{port}"
+
+
+def management_center_member_addresses(host_pattern, port):
+    hosts = require_inventory_hosts(host_pattern, "Hazelcast members")
+    addresses = []
+    for host in hosts:
+        address = host.get("private_ip") or host.get("public_ip")
+        if not address:
+            exit_with_error(f"Hazelcast member host [{host.get('public_ip', '<unknown>')}] does not have a private_ip or public_ip in inventory.yaml.")
+        addresses.append(f"{address}:{port}")
+    return ",".join(addresses)
+
+
 class InventoryInstallCli:
 
     def __init__(self, argv):
@@ -140,6 +194,7 @@ class InventoryInstallCli:
             async_profiler  Installs Async Profiler
             iperf3          Installs iperf3 Profiler
             tls_keystores   Installs TLS keystore and truststores for secure connections
+            observability   Installs Prometheus and Grafana
         '''
 
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -158,7 +213,7 @@ class InventoryInstallCli:
                                          description='Install Java')
         parser.add_argument("--url", help="The url of the JDK tar.gz file", default=default_url)
         parser.add_argument("--examples", help="Shows example urls", action='store_true')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
 
         args = parser.parse_args(argv)
 
@@ -187,7 +242,7 @@ class InventoryInstallCli:
                             default="https://github.com/async-profiler/async-profiler/releases/download/v3.0/async-profiler-3.0-linux-x64.tar.gz")
         parser.add_argument("--hosts",
                             help="The target hosts.",
-                            default="all:!mc")
+                            default="all:!mc:!observability")
 
         args = parser.parse_args(argv)
 
@@ -206,7 +261,7 @@ class InventoryInstallCli:
     def perf(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install Linux Perf')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
 
         args = parser.parse_args(argv)
 
@@ -222,7 +277,7 @@ class InventoryInstallCli:
     def simulator(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install Simulator')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
         args = parser.parse_args(argv)
 
         hosts = args.hosts
@@ -239,7 +294,7 @@ class InventoryInstallCli:
     def iperf3(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install iperf3')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
         args = parser.parse_args(argv)
 
         hosts = args.hosts
@@ -263,6 +318,44 @@ class InventoryInstallCli:
         log_header("Generating and installing TLS keystore and truststores")
         cmd = f"ansible-playbook --inventory inventory.yaml {simulator_home}/playbooks/install_tls_keystores.yaml -e rsa_key_size='{rsa_key_size}'"
         self._run_installation(cmd)
+
+    def observability(self, argv):
+        parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                         description='Install Prometheus and Grafana')
+        parser.add_argument("--hosts", help="The target hosts.", default="observability")
+        parser.add_argument("--member-hosts", help="The Hazelcast member hosts MC should connect to.", default="nodes")
+        parser.add_argument("--member-port", help="The Hazelcast member port MC should connect to.", type=int, default=5701)
+        parser.add_argument("--cluster-name", help="The Hazelcast cluster name MC should connect to.", default="workers")
+        parser.add_argument("--skip-mc-connect",
+                            help="Only install Prometheus/Grafana; do not configure the MC cluster connection.",
+                            action="store_true")
+        args = parser.parse_args(argv)
+
+        mc = require_single_inventory_host("mc", "Management Center")
+        observability_hosts = require_inventory_hosts(args.hosts, "observability")
+        mc_metrics_target = management_center_metrics_target(mc)
+
+        log_header("Installing Observability")
+        info(f"hosts={args.hosts}")
+        info(f"mc_metrics_target={mc_metrics_target}")
+        info(f"HZ_LICENSEKEY={'set' if os.environ.get('HZ_LICENSEKEY') else 'not set'}")
+        if not args.skip_mc_connect:
+            member_addresses = management_center_member_addresses(args.member_hosts, args.member_port)
+            info(f"cluster_name={args.cluster_name}")
+            info(f"member_addresses={member_addresses}")
+            cmd = f"ansible-playbook --limit mc --inventory inventory.yaml {simulator_home}/playbooks/configure_management_center.yaml -e cluster_name='{args.cluster_name}' -e member_addresses='{member_addresses}'"
+            self._run_installation(cmd)
+        cmd = f"ansible-playbook --limit {args.hosts} --inventory inventory.yaml {simulator_home}/playbooks/install_observability.yaml -e simulator_home='{simulator_home}' -e mc_metrics_target='{mc_metrics_target}'"
+        self._run_installation(cmd)
+        self._print_observability_endpoints(mc, observability_hosts)
+
+    def _print_observability_endpoints(self, mc, observability_hosts):
+        log_header("Observability Endpoints")
+        info(f"Management Center: {public_endpoint(mc, 8080, 'Management Center')}")
+        for index, host in enumerate(observability_hosts, start=1):
+            suffix = f" [{index}]" if len(observability_hosts) > 1 else ""
+            info(f"Grafana{suffix}: {public_endpoint(host, 3000, 'observability')}")
+            info(f"Prometheus{suffix}: {public_endpoint(host, 9090, 'observability')}")
 
     def _run_installation(self, cmd):
         info(cmd)
@@ -385,8 +478,8 @@ class InventoryShellCli:
 
     def remote_ping(self, hosts):
         log_header("Inventory Ping")
-        cmd = f"""ansible-playbook --limit {hosts} --inventory inventory.yaml \
-                      {simulator_home}/playbooks/shell.yaml -e "cmd='exit 0'" """
+        cmd = f"""ansible-playbook --limit {shlex.quote(hosts)} --inventory inventory.yaml \
+                      {shlex.quote(simulator_home + '/playbooks/shell.yaml')} -e {ansible_extra_vars(cmd='exit 0')} """
         info(cmd)
         exitcode = shell(cmd)
         if exitcode != 0:
@@ -397,8 +490,8 @@ class InventoryShellCli:
     def remote_shell(self, shell_cmd, hosts):
         log_header("Inventory Remote Shell")
         info(f"cmd: {shell_cmd}")
-        cmd = f"""ansible-playbook --limit {hosts} --inventory inventory.yaml \
-                        {simulator_home}/playbooks/shell.yaml -e "cmd='{shell_cmd}'" """
+        cmd = f"""ansible-playbook --limit {shlex.quote(hosts)} --inventory inventory.yaml \
+                        {shlex.quote(simulator_home + '/playbooks/shell.yaml')} -e {ansible_extra_vars(cmd=shell_cmd)} """
         info(cmd)
         exitcode = shell(cmd)
         if exitcode != 0:
