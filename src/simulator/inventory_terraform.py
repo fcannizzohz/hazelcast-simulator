@@ -2,7 +2,6 @@ import json
 import os
 from os import path
 import subprocess
-import boto3
 import re
 
 from simulator.util import shell, exit_with_error, read_file, write_yaml
@@ -50,7 +49,7 @@ def terraform_import(terraform_plan):
 
     for group_name, block in json.loads(output).items():
         if 'value' in block and block['value']:  # Check if 'value' key exists and is not empty
-            json_host_list = block['value'][0]
+            json_host_list = __normalize_host_list(block['value'])
             host_map = {}
             for json_host in json_host_list:
                 if group_name == 'load_balancers':
@@ -60,8 +59,10 @@ def terraform_import(terraform_plan):
                     host_data['private_ip'] = private_ip
 
                 else:
-                    host_name = json_host['public_ip']
+                    host_name = json_host.get('public_ip') or json_host['private_ip']
                     host_data = {'private_ip': json_host['private_ip']}
+                    if json_host.get('public_ip'):
+                        host_data['public_ip'] = json_host['public_ip']
 
                 tags = json_host.get("tags")
 
@@ -79,6 +80,18 @@ def terraform_import(terraform_plan):
     info("Creating [inventory.yaml]")
     write_yaml("inventory.yaml", inventory)
     info(read_file("inventory.yaml"))
+
+
+def __normalize_host_list(value):
+    if isinstance(value, dict):
+        # Terraform outputs may be a single host object or a map keyed by
+        # instance name/resource key. Normalize both to a plain host list.
+        if 'private_ip' in value or 'public_ip' in value or 'dns_name' in value:
+            return [value]
+        return list(value.values())
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
+        return value[0]
+    return value
 
 
 def terraform_destroy(inventory_plan_yaml, force=False):
@@ -115,21 +128,12 @@ def __ensure_plan_exists(terraform_plan):
         exit_with_error(f"Directory [{terraform_plan}] does not exist.")
 
 
-def extract_aws_region_from_arn(arn):
-    # ARN format: arn:partition:service:region:account-id:resource
-    match = re.match(r'arn:[^:]+:[^:]+:([^:]+):', arn)
-    if match:
-        return match.group(1)
-    return "default_region"
-
-
-def extract_aws_region_from_arn(arn):
+def extract_nlb_region_from_arn(arn):
     # ARN format: arn:aws:elasticloadbalancing:<region>:<account-id>:loadbalancer/<lb-name>/<lb-id>
     match = re.match(r'arn:aws:elasticloadbalancing:([^:]+):', arn)
     if match:
         return match.group(1)
-    else:
-        return None
+    return None
 
 
 def extract_lb_name_from_arn(arn):
@@ -143,7 +147,9 @@ def extract_lb_name_from_arn(arn):
 
 
 def __get_nlb_private_ip(data):
-    aws_region = extract_aws_region_from_arn(data['arn'])
+    import boto3
+
+    aws_region = extract_nlb_region_from_arn(data['arn'])
     aws_nlb_name = extract_lb_name_from_arn(data['arn'])
 
     if aws_region is None or aws_nlb_name is None:
@@ -191,4 +197,3 @@ def __get_nlb_private_ip(data):
     else:
         print("Error: No private IP found.")
         return None
-
