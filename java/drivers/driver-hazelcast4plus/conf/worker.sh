@@ -197,8 +197,31 @@ fi
 
 JVM_ARGS="-Dlog4j2.configurationFile=log4j.xml"
 
-if [ "${WORKER_TYPE}" = "member" ]; then
+append_jvm_property_if_missing() {
+    local property="$1"
+    local value="$2"
+    if [[ "$JVM_OPTIONS" != *"-D${property}="* ]]; then
+        JVM_OPTIONS="$JVM_OPTIONS -D${property}=$value"
+    fi
+}
+
+if [ "${WORKER_TYPE:-}" = "member" ]; then
     JVM_OPTIONS=$member_args
+
+    if [ "${DIAGNOSTICS_PRECONFIGURE:-true}" = "true" ]; then
+        DIAGNOSTICS_DIRECTORY="${DIAGNOSTICS_DIRECTORY:-$(pwd -P)/diagnostics}"
+        DIAGNOSTICS_FILE_PREFIX="${DIAGNOSTICS_FILE_PREFIX:-${WORKER_NAME:-member}}"
+        DIAGNOSTICS_MAX_ROLLED_FILE_SIZE_MB="${DIAGNOSTICS_MAX_ROLLED_FILE_SIZE_MB:-50}"
+        DIAGNOSTICS_MAX_ROLLED_FILE_COUNT="${DIAGNOSTICS_MAX_ROLLED_FILE_COUNT:-10}"
+
+        mkdir -p "$DIAGNOSTICS_DIRECTORY"
+        append_jvm_property_if_missing "hazelcast.diagnostics.enabled" "false"
+        append_jvm_property_if_missing "hazelcast.diagnostics.directory" "$DIAGNOSTICS_DIRECTORY"
+        append_jvm_property_if_missing "hazelcast.diagnostics.filename.prefix" "$DIAGNOSTICS_FILE_PREFIX"
+        append_jvm_property_if_missing "hazelcast.diagnostics.max.rolled.file.size.mb" "$DIAGNOSTICS_MAX_ROLLED_FILE_SIZE_MB"
+        append_jvm_property_if_missing "hazelcast.diagnostics.max.rolled.file.count" "$DIAGNOSTICS_MAX_ROLLED_FILE_COUNT"
+        log "INFO" "Preconfigured Hazelcast diagnostics directory '$DIAGNOSTICS_DIRECTORY' with prefix '$DIAGNOSTICS_FILE_PREFIX'."
+    fi
 else
     JVM_OPTIONS=$client_args
 fi

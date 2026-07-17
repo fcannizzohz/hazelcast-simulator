@@ -28,6 +28,7 @@ Please refer to the [Quickstart](#quickstart) to start your Simulator journey.
     * [Install](#install)
     * [Creating a benchmark](#creating-a-benchmark)
     * [Provisioning the environment](#provisioning-the-environment)
+    * [Installing and operating observability](#installing-and-operating-observability)
     * [SSH to nodes](#ssh-to-nodes)
     * [Running a test.](#running-a-test)
     * [Docker Usage Examples](#docker-usage-examples)
@@ -270,6 +271,61 @@ Install the Simulator:
    ```shell
    inventory install simulator
    ```
+
+## Installing and operating observability
+
+AWS templates can optionally provision a separate `observability` instance that runs Prometheus and Grafana. Prometheus
+scrapes the Management Center `/metrics` endpoint, so the `mc` group must also be provisioned.
+
+Enable both groups in `inventory_plan.yaml`:
+
+   ```yaml
+   mc:
+       count: 1
+
+   observability:
+       count: 1
+   ```
+
+Then provision the environment and install the stack:
+
+   ```shell
+   inventory apply
+   inventory install observability
+   ```
+
+The install command fails before making remote changes if the `mc` group is missing or empty. It also configures
+Management Center to connect to the `nodes` group as cluster `workers` and restarts MC before starting Prometheus.
+Use `--member-hosts`, `--member-port`, or `--cluster-name` if your project uses different member placement or
+cluster settings.
+
+If `HZ_LICENSEKEY` is present in the environment, the MC restart also sets `hazelcast.mc.license` so Enterprise
+MC features such as the Prometheus exporter can start with the license already installed. The license is read from
+the environment by Ansible rather than passed on the Ansible command line. MC receives it through both `MC_LICENSE`
+and `-Dhazelcast.mc.license=...`; the latter can be visible in the MC JVM process arguments on the remote host while
+MC is running.
+
+When reconfiguring MC, the installer stops the existing MC process and removes a stale `~/hazelcast-mc/mc.lock`
+file if one was left by the previous process. The installer sets `MC_HOME=~/hazelcast-mc` for both `hz-mc conf`
+and the restarted MC process so the configured cluster connection is read by the running MC instance.
+
+When installation completes, open:
+
+* Grafana: `http://<observability-public-ip>:3000`
+* Prometheus: `http://<observability-public-ip>:9090`
+
+The install command prints the Management Center, Grafana, and Prometheus endpoints at the end of a successful run.
+
+To operate the stack from the benchmark directory:
+
+   ```shell
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose ps || sudo docker-compose ps)"
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose logs --tail=100 || sudo docker-compose logs --tail=100)"
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose restart || sudo docker-compose restart)"
+   inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose pull && sudo docker compose up -d || sudo docker-compose pull && sudo docker-compose up -d)"
+   ```
+
+See [observability/README.md](observability/README.md) for the full runbook and troubleshooting notes.
 
 To destroy the environment, call the following:
 
@@ -558,7 +614,7 @@ should be conducted in.
 | `loadgenerator_hosts`                  | `loadgenerators` | Defines the host for Clients, based on either `loadgenerators` or `nodes`, allowing both separate and mixed client/member setups            |
 | `node_hosts`                           | `nodes`          | Defines the host for Members - this should generally always be `nodes`, and only `loadgenerator_hosts` should be changed for mixed testing. |
 | `driver`                               | `hazelcast5`     | The Hazelcast Driver to use - for 5.0+ testing, this is either `hazelcast5` or `hazelcast-enterprise5` for OS or EE respectively            |
-| `version`                              | `maven=5.1`      | The Hazelcast version to use - typically provided by maven, i.e. `maven=5.3.0-SNAPSHOT`                                                     |
+| `version`                              | `maven=5.1`      | The Hazelcast version to use - typically provided by maven, i.e. `maven=5.7.0`                                                     |
 | `client_args`                          | `-Xms3g -Xmx3g`  | The command-line Java parameters passed to all clients in this test suite                                                                   |
 | `member_args`                          | `-Xms3g -Xmx3g`  | The command-line Java parameters passed to all members in this test suite                                                                   |
 | `performance_monitor_interval_seconds` | `1`              | The interval of the Simulator performance monitor                                                                                           |
@@ -1582,22 +1638,44 @@ Hazelcast has a diagnostics system which provides detailed insights on what is h
 overhead
 that we always enable it when doing benchmarks.
 
-```yaml
+Member workers started by the Hazelcast 4+ driver are preconfigured with a diagnostics output directory under the
+worker directory:
 
-members_args: "-Dhazelcast.diagnostics.enabled=true \
-                               -Dhazelcast.diagnostics.metric.level=info \
-                               -Dhazelcast.diagnostics.invocation.sample.period.seconds=30 \
-                               -Dhazelcast.diagnostics.pending.invocations.period.seconds=30 \
-                               -Dhazelcast.diagnostics.slowoperations.period.seconds=30" \
-
-client_args: "-Dhazelcast.diagnostics.enabled=true \
-                               -Dhazelcast.diagnostics.metric.level=info" \
-
+```text
+<worker-dir>/diagnostics
 ```
 
-If these flags are added to the `client_args` and `member_args` respectively, both client and server will have
-diagnostics enabled. Both will write a diagnostics file. Once the Simulator
-run is completed and the artifacts are downloaded, the diagnostics files can be analyzed.
+Diagnostics are disabled at member startup, but the directory, file prefix, and rolling policy are already fixed in
+the member JVM arguments. This allows diagnostics to be enabled dynamically through Management Center without
+restarting the worker, and any generated diagnostics files are downloaded with the normal worker artifacts at the end
+of a run.
+If `member_args` already contains a `-Dhazelcast.diagnostics.*` property, that explicit value is preserved.
+
+Use Management Center to enable, disable, or inspect diagnostics while the cluster is running:
+
+```bash
+inventory control diagnostics-status --cluster workers
+inventory control diagnostics-on --cluster workers --auto-off-minutes 60
+inventory control diagnostics-off --cluster workers
+```
+
+The commands use the Management Center diagnostics configuration REST API and default to the `mc` inventory group on
+port `8080`. The API requires Enterprise Management Center licensing and a configured cluster connection. The
+`diagnostics-on` command does not control the log directory; that has to be preconfigured at member startup, which the
+default worker script now does.
+
+The member-side defaults can be overridden in the worker parameters if needed:
+
+```yaml
+DIAGNOSTICS_PRECONFIGURE: "true"
+DIAGNOSTICS_DIRECTORY: "/custom/path"
+DIAGNOSTICS_FILE_PREFIX: "member"
+DIAGNOSTICS_MAX_ROLLED_FILE_SIZE_MB: "50"
+DIAGNOSTICS_MAX_ROLLED_FILE_COUNT: "10"
+```
+
+If you provide a custom `worker_sh`, include equivalent `-Dhazelcast.diagnostics.*` properties in the member JVM
+arguments so dynamic enablement writes into the worker directory and the files are collected automatically.
 
 ## Logging
 
