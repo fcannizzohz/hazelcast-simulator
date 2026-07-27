@@ -429,6 +429,11 @@ loadgenerator_hosts: loadgenerators
 member_hosts: hazelcast
 ```
 
+Do not set `node_hosts` when `node_count: 0`: Hazelcast members are managed by
+Kubernetes and do not run Simulator agents. Client workers run only through
+`loadgenerator_hosts`, while `member_hosts: hazelcast` resolves the in-cluster
+Hazelcast Service.
+
 Run:
 
 ```bash

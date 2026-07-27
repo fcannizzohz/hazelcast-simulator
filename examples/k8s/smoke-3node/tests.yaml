@@ -2,12 +2,15 @@
   duration: 60s
   repetitions: 1
   loadgenerator_count: 1
+  # Hazelcast members are Kubernetes-managed. Keep node_count at 0 and do not
+  # set node_hosts: that would treat member Pods as Simulator-agent hosts.
   node_count: 0
   driver: hazelcast5
   version: maven=5.7.0
   client_hazelcast_xml: client-hazelcast.xml
+  # Client workers run only in the in-cluster Simulator agent Pods.
   loadgenerator_hosts: loadgenerators
-  node_hosts: nodes
+  # Connect clients to the Hazelcast Kubernetes Service, not member Pods.
   member_hosts: hazelcast
   verify_enabled: true
   performance_monitor_interval_seconds: 1
