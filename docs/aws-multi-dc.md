@@ -21,6 +21,6 @@ are managed cloud environments: credentials and quota must be checked before
 provisioning, and `inventory destroy` must be run after every successful or
 failed experiment that created resources.
 
-The [multi-DC tutorial](../examples/multi-dc/README_TEST.md) is the executable
+The [multi-DC tutorial](../examples/multi-dc/README.md) is the executable
 guide. It contains the AWS sign-in and discovery commands, scenario selection,
 configuration details, verification, and provider-side cleanup checks.

@@ -132,4 +132,4 @@ Backward compatibility notes:
 - `existing-cluster` is untouched
 
 Test examples and a manual smoke-test runbook are available in
-[examples/multi-dc/README_TEST.md](../../examples/multi-dc/README_TEST.md).
+[examples/multi-dc/README.md](../../examples/multi-dc/README.md).

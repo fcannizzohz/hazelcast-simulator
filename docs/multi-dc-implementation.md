@@ -1,15 +1,16 @@
-# Multi-DC Implementation Summary
+# Multi-DC Implementation Reference
 
-This summary describes the multi-DC work on the current branch compared with the base branch in this repository, `master`.
+This reference describes the managed AWS multi-DC implementation and its shared
+simulator compatibility work.
 
-The implementation was kept additive:
+The implementation is additive:
 - existing templates were left in place
 - `existing-cluster` behavior was not changed
 - the new functionality is centered on one new managed template plus the minimum importer support needed to consume its Terraform outputs
 
 ## Existing Files Changed
 
-### [src/simulator/inventory_terraform.py](./src/simulator/inventory_terraform.py)
+### [src/simulator/inventory_terraform.py](../src/simulator/inventory_terraform.py)
 
 This is the main code change outside the new template.
 
@@ -26,7 +27,7 @@ Why it changed:
 - the new multi-DC Terraform template emits flat or map-shaped instance collections rather than the single older nested shape
 - simulator still needs to end up with the same flat `inventory.yaml` model
 
-### [.gitignore](./.gitignore)
+### [.gitignore](../.gitignore)
 
 What changed:
 - added `mvnrepo/`
@@ -38,23 +39,23 @@ Why it changed:
 
 A new additive template was added:
 
-- [templates/hazelcast5-multidc-ec2](./templates/hazelcast5-multidc-ec2)
+- [templates/hazelcast5-multidc-ec2](../templates/hazelcast5-multidc-ec2)
 
 Purpose:
 - provide a managed AWS multi-DC deployment path without modifying the existing single-DC templates
 
 Added files:
-- [templates/hazelcast5-multidc-ec2/inventory_plan.yaml](./templates/hazelcast5-multidc-ec2/inventory_plan.yaml)
-- [templates/hazelcast5-multidc-ec2/README.md](./templates/hazelcast5-multidc-ec2/README.md)
-- [templates/hazelcast5-multidc-ec2/aws/main.tf](./templates/hazelcast5-multidc-ec2/aws/main.tf)
-- [templates/hazelcast5-multidc-ec2/ansible.cfg](./templates/hazelcast5-multidc-ec2/ansible.cfg)
-- [templates/hazelcast5-multidc-ec2/async-tests.yaml](./templates/hazelcast5-multidc-ec2/async-tests.yaml)
-- [templates/hazelcast5-multidc-ec2/client-hazelcast.xml](./templates/hazelcast5-multidc-ec2/client-hazelcast.xml)
-- [templates/hazelcast5-multidc-ec2/hazelcast.xml](./templates/hazelcast5-multidc-ec2/hazelcast.xml)
-- [templates/hazelcast5-multidc-ec2/setup](./templates/hazelcast5-multidc-ec2/setup)
-- [templates/hazelcast5-multidc-ec2/teardown](./templates/hazelcast5-multidc-ec2/teardown)
-- [templates/hazelcast5-multidc-ec2/tests.yaml](./templates/hazelcast5-multidc-ec2/tests.yaml)
-- [templates/hazelcast5-multidc-ec2/.gitignore](./templates/hazelcast5-multidc-ec2/.gitignore)
+- [templates/hazelcast5-multidc-ec2/inventory_plan.yaml](../templates/hazelcast5-multidc-ec2/inventory_plan.yaml)
+- [templates/hazelcast5-multidc-ec2/README.md](../templates/hazelcast5-multidc-ec2/README.md)
+- [templates/hazelcast5-multidc-ec2/aws/main.tf](../templates/hazelcast5-multidc-ec2/aws/main.tf)
+- [templates/hazelcast5-multidc-ec2/ansible.cfg](../templates/hazelcast5-multidc-ec2/ansible.cfg)
+- [templates/hazelcast5-multidc-ec2/async-tests.yaml](../templates/hazelcast5-multidc-ec2/async-tests.yaml)
+- [templates/hazelcast5-multidc-ec2/client-hazelcast.xml](../templates/hazelcast5-multidc-ec2/client-hazelcast.xml)
+- [templates/hazelcast5-multidc-ec2/hazelcast.xml](../templates/hazelcast5-multidc-ec2/hazelcast.xml)
+- [templates/hazelcast5-multidc-ec2/setup](../templates/hazelcast5-multidc-ec2/setup)
+- [templates/hazelcast5-multidc-ec2/teardown](../templates/hazelcast5-multidc-ec2/teardown)
+- [templates/hazelcast5-multidc-ec2/tests.yaml](../templates/hazelcast5-multidc-ec2/tests.yaml)
+- [templates/hazelcast5-multidc-ec2/.gitignore](../templates/hazelcast5-multidc-ec2/.gitignore)
 
 ### What the new template adds
 
@@ -69,7 +70,7 @@ The new template introduces:
 
 ### Main Terraform Structure
 
-[templates/hazelcast5-multidc-ec2/aws/main.tf](./templates/hazelcast5-multidc-ec2/aws/main.tf) is the core of the implementation.
+[templates/hazelcast5-multidc-ec2/aws/main.tf](../templates/hazelcast5-multidc-ec2/aws/main.tf) is the core of the implementation.
 
 It adds:
 - region/DC grouping derived from `inventory_plan.yaml`
@@ -94,7 +95,7 @@ Those flat outputs are what allow the existing simulator inventory model to keep
 ## Tests Added
 
 Added test file:
-- [src/simulator/tests/test_inventory_terraform.py](./src/simulator/tests/test_inventory_terraform.py)
+- [src/simulator/tests/test_inventory_terraform.py](../src/simulator/tests/test_inventory_terraform.py)
 
 What it covers:
 - legacy nested Terraform output shape
@@ -107,20 +108,20 @@ This test exists specifically to protect the compatibility layer added in `inven
 
 A new examples area was added:
 
-- [examples/multi-dc](./examples/multi-dc)
+- [examples/multi-dc](../examples/multi-dc)
 
 Added files:
-- [examples/multi-dc/README_TEST.md](./examples/multi-dc/README_TEST.md)
-- [examples/multi-dc/smoke-tests.yaml](./examples/multi-dc/smoke-tests.yaml)
-- [examples/multi-dc/regression-single-dc-3nodes.inventory_plan.yaml](./examples/multi-dc/regression-single-dc-3nodes.inventory_plan.yaml)
-- [examples/multi-dc/managed-single-region-2az-3nodes.inventory_plan.yaml](./examples/multi-dc/managed-single-region-2az-3nodes.inventory_plan.yaml)
-- [examples/multi-dc/managed-two-region-3nodes.inventory_plan.yaml](./examples/multi-dc/managed-two-region-3nodes.inventory_plan.yaml)
-- [examples/multi-dc/existing-cluster-three-region.inventory.yaml](./examples/multi-dc/existing-cluster-three-region.inventory.yaml)
-- [examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml](./examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml)
+- [examples/multi-dc/README.md](../examples/multi-dc/README.md)
+- [examples/multi-dc/smoke-tests.yaml](../examples/multi-dc/smoke-tests.yaml)
+- [examples/multi-dc/regression-single-dc-3nodes.inventory_plan.yaml](../examples/multi-dc/regression-single-dc-3nodes.inventory_plan.yaml)
+- [examples/multi-dc/managed-single-region-2az-3nodes.inventory_plan.yaml](../examples/multi-dc/managed-single-region-2az-3nodes.inventory_plan.yaml)
+- [examples/multi-dc/managed-two-region-3nodes.inventory_plan.yaml](../examples/multi-dc/managed-two-region-3nodes.inventory_plan.yaml)
+- [examples/multi-dc/existing-cluster-three-region.inventory.yaml](../examples/multi-dc/existing-cluster-three-region.inventory.yaml)
+- [examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml](../examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml)
 
 ### What the runbook adds
 
-[README_TEST.md](./examples/multi-dc/README_TEST.md) adds:
+[README.md](../examples/multi-dc/README.md) adds:
 - Docker-first smoke-test instructions
 - shared Maven repo usage through `./mvnrepo`
 - `SIM_IMAGE` as the image selector
@@ -137,8 +138,7 @@ Added files:
 ## Files Added Only for Example Data
 
 These were added as supporting example inputs, not as simulator runtime changes:
-- [examples/multi-dc/existing-cluster-three-region.inventory.yaml](./examples/multi-dc/existing-cluster-three-region.inventory.yaml)
-- [examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml](./examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml)
+- [examples/multi-dc/existing-cluster-three-region.inventory.yaml](../examples/multi-dc/existing-cluster-three-region.inventory.yaml)
+- [examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml](../examples/multi-dc/existing-cluster-three-region.client-hazelcast.xml)
 
 They document example topologies but do not change `existing-cluster` behavior.
-

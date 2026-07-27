@@ -49,7 +49,8 @@ docker-sim inventory destroy
 | --- | --- | --- |
 | Image-backed workspace | [Image-backed workspaces](image-backed-workspaces.md) | [Workspace initialization](../examples/README_INIT.md) |
 | Kubernetes and GKE | [Kubernetes and GKE](kubernetes-gke.md) | [Kubernetes tutorial](../examples/k8s/README.md) |
-| AWS multi-DC | [AWS multi-DC](aws-multi-dc.md) | [AWS multi-DC runbook](../examples/multi-dc/README_TEST.md) |
+| AWS multi-DC | [AWS multi-DC](aws-multi-dc.md) | [AWS multi-DC runbook](../examples/multi-dc/README.md) |
+| AWS multi-DC implementation | [Implementation reference](multi-dc-implementation.md) | — |
 | Cluster controls and Chaos Mesh | [Controls and chaos](cluster-controls-and-chaos.md) | [Kubernetes controls](../examples/k8s/README.md#11-exercise-controls) |
 | Observability exports | [Observability](observability.md) | [Kubernetes observability](../examples/k8s/README.md#12-use-observability) |
 | AP/CP resilience | [AP/CP resilience](ap-cp-resilience.md) | [AP/CP scenario](../examples/k8s/README.md#single-zone-synthetic-apcp-example) |
