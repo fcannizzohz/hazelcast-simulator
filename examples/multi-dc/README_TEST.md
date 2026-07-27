@@ -1,41 +1,10 @@
 # Multi-DC Test Runbook
 
-Run these commands from the repository root. The scenarios use Hazelcast
-Enterprise, Management Center, and the optional Prometheus/Grafana observability
-host where the selected template supports it.
-
-Set the shared paths once. `./bin/docker-sim` defaults `SIM_IMAGE` to
-`hazelcast/simulator:latest`, so setting `SIM_IMAGE` is optional unless you want
-to use a local image.
-
-```bash
-mkdir -p ./simulator-projects ./mvnrepo
-export SIM_IMAGE="${SIM_IMAGE:-hazelcast/simulator:latest}"
-```
-
-## Build Local Docker Image
-
-Use a local image when `hazelcast/simulator:latest` does not yet contain the
-multi-DC, control, and observability changes from this checkout.
-
-Build the image from the repository root:
-
-```bash
-docker build -t hazelcast/simulator:local .
-```
-
-Then point the runbook commands at the local image:
-
-```bash
-export SIM_IMAGE=hazelcast/simulator:local
-```
-
-Verify the image exposes the expected CLIs:
-
-```bash
-docker run --rm -it -v "$(pwd):/workspace" "$SIM_IMAGE" perftest --help
-docker run --rm -it -v "$(pwd):/workspace" "$SIM_IMAGE" inventory --help
-```
+The scenarios use Hazelcast Enterprise, Management Center, and the optional
+Prometheus/Grafana observability host where the selected template supports it.
+Before continuing, complete the shared [workspace initialization guide](../README_INIT.md).
+It installs the image-supplied `docker-sim` command, validates the `~/.m2`
+mount, and creates `$SIMULATOR_WORKSPACE/projects` outside the checkout.
 
 ## Scope
 
@@ -54,39 +23,44 @@ The first three scenarios use the 5 minute Enterprise smoke test from
 
 ## Running or Creating a Runbook
 
-Each scenario below is a runbook: it names the Simulator template to start from,
-the example inventory plan to use, the test suite to run, and any extra action
-that makes the scenario distinct. To run an existing runbook, create the project
-with `perftest create`, copy the scenario's `inventory_plan.yaml` and
-`tests.yaml`, then set `PROJECT` to that project directory. The create step
-generates the project directory and its `key` / `key.pub` pair under
-`./simulator-projects`.
+Each scenario below is a runbook: it names an image-bundled tutorial scenario
+and an extra action that makes the run distinct. `docker-sim tutorial-init`
+creates the project, its `key` / `key.pub` pair, plan, and tests below
+`$SIMULATOR_WORKSPACE/projects`; no files are copied from this checkout.
 
 These scenarios use Hazelcast Enterprise, so set the license key once and
 replace the placeholder in the copied `tests.yaml` before provisioning:
 
 ```bash
 export HZ_LICENSEKEY='<your Hazelcast Enterprise license key>'
-export PROJECT="$(pwd)/simulator-projects/<project>"
-python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+export PROJECT="$SIMULATOR_WORKSPACE/projects/<project>"
+docker-sim python3 -c 'from pathlib import Path; import os; p = Path("tests.yaml"); p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
-`./bin/docker-sim` forwards `HZ_LICENSEKEY` into the Simulator container when it
+`docker-sim` forwards `HZ_LICENSEKEY` into the Simulator container when it
 is set. During `inventory install observability`, the same value is applied to
 Management Center through `MC_LICENSE` and `-Dhazelcast.mc.license` before MC is
 restarted. The value is not passed on the local Ansible command line, but the
 Java system property can be visible in the MC JVM process arguments on the
 remote host while MC is running.
 
-Before provisioning a managed AWS runbook, make sure AWS credentials are
-available in `~/.aws` and that the copied `inventory_plan.yaml` contains valid
-AMI, VPC, Internet Gateway, region, and AZ values. Use
-`./bin/aws_inventory_values` to print values that can be copied into the plan:
+Before provisioning a managed AWS runbook, sign in through the image and verify
+the credentials that `docker-sim` persists in the standard host AWS directory:
 
 ```bash
-./bin/aws_inventory_values --team Cloud eu-west-2 eu-central-1
-./bin/aws_inventory_values --team Cloud --images eu-west-2 eu-central-1
+# Configure a profile once if you do not already have one:
+docker-sim aws configure sso
+docker-sim aws sso login
+docker-sim aws sts get-caller-identity
+docker-sim aws ec2 describe-availability-zones --region eu-west-2 --query 'AvailabilityZones[?State==`available`].ZoneName' --output table
+docker-sim aws ec2 describe-vpcs --region eu-west-2 --query 'Vpcs[].{VpcId:VpcId,Cidr:CidrBlock,Default:IsDefault}' --output table
+docker-sim aws ec2 describe-images --region eu-west-2 --owners 099720109477 --query 'sort_by(Images,&CreationDate)[-5:].{ImageId:ImageId,Name:Name,Created:CreationDate}' --output table
 ```
+
+If your organization uses a named profile, set `AWS_PROFILE` before these
+commands and use `docker-sim aws sso login --profile "$AWS_PROFILE"`. Choose an available
+AZ, VPC, Internet Gateway, subnet CIDR, and AMI from this output before editing
+the generated `inventory_plan.yaml`.
 
 Use the output as:
 
@@ -103,19 +77,19 @@ team: <team>
 After the plan is filled in, the normal runbook path is to apply the inventory,
 install the required software, verify connectivity, run the test, inspect the
 report, and finally destroy the project. All of these commands run from the
-project directory through `./bin/docker-sim`; the wrapper changes into
-`PROJECT`, mounts the repository and Maven cache, and runs the selected
+project directory through `docker-sim`; the wrapper changes into
+`PROJECT`, mounts the project and host Maven cache, and runs the selected
 Simulator image:
 
 ```bash
-export PROJECT="$(pwd)/simulator-projects/<project>"
-./bin/docker-sim inventory apply
-./bin/docker-sim inventory install java
-./bin/docker-sim inventory install simulator
-./bin/docker-sim inventory install observability
-./bin/docker-sim inventory tune
-./bin/docker-sim inventory shell --ping --hosts all
-./bin/docker-sim inventory control probe --hosts nodes
+export PROJECT="$SIMULATOR_WORKSPACE/projects/<project>"
+docker-sim inventory apply
+docker-sim inventory install java
+docker-sim inventory install simulator
+docker-sim inventory install observability
+docker-sim inventory tune
+docker-sim inventory shell --ping --hosts all
+docker-sim inventory control probe --hosts nodes
 ```
 
 Managed runbooks provision Hazelcast members, one load generator, one Management
@@ -133,14 +107,14 @@ clear message instead of producing a partial install.
 If you change the cluster name or member port, pass the matching values:
 
 ```bash
-./bin/docker-sim inventory install observability --member-hosts nodes --member-port 5701 --cluster-name workers
+docker-sim inventory install observability --member-hosts nodes --member-port 5701 --cluster-name workers
 ```
 
 At the end of a successful observability install, the command prints the MC,
 Grafana, and Prometheus URLs. You can print them again from `inventory.yaml`:
 
 ```bash
-./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); mc=next(iter(inv["mc"]["hosts"])); obs=next(iter(inv["observability"]["hosts"])); print(f"MC: http://{mc}:8080"); print(f"Grafana: http://{obs}:3000"); print(f"Prometheus: http://{obs}:9090")'
+docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); mc=next(iter(inv["mc"]["hosts"])); obs=next(iter(inv["observability"]["hosts"])); print(f"MC: http://{mc}:8080"); print(f"Grafana: http://{obs}:3000"); print(f"Prometheus: http://{obs}:9090")'
 ```
 
 **Important**: MC is preconfigured during install, but it only connects while the
@@ -155,31 +129,31 @@ directory, so any diagnostics files generated during the run are downloaded with
 the normal run artifacts under each worker's `diagnostics/` directory:
 
 ```bash
-./bin/docker-sim inventory control diagnostics-status --cluster workers
-./bin/docker-sim inventory control diagnostics-on --cluster workers --auto-off-minutes 60
-./bin/docker-sim inventory control diagnostics-off --cluster workers
+docker-sim inventory control diagnostics-status --cluster workers
+docker-sim inventory control diagnostics-on --cluster workers --auto-off-minutes 60
+docker-sim inventory control diagnostics-off --cluster workers
 ```
 
 Use the observability host commands when you need to check the Prometheus and
 Grafana containers directly:
 
 ```bash
-./bin/docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose ps || sudo docker-compose ps)"
-./bin/docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose logs --tail=100 || sudo docker-compose logs --tail=100)"
+docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose ps || sudo docker-compose ps)"
+docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose logs --tail=100 || sudo docker-compose logs --tail=100)"
 ```
 
 Run the test with `perftest run`. It starts the configured workers, downloads
 the worker data at the end, and creates a local report under `runs/`:
 
 ```bash
-./bin/docker-sim perftest run
-./bin/docker-sim sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); echo "$LATEST_RUN"; find "$LATEST_RUN/report" -maxdepth 2 -type f | sort'
+docker-sim perftest run
+docker-sim sh -lc 'LATEST_RUN=$(find runs -mindepth 2 -maxdepth 2 -type d | sort | tail -1); echo "$LATEST_RUN"; find "$LATEST_RUN/report" -maxdepth 2 -type f | sort'
 ```
 
 Destroy the managed AWS resources when you are done:
 
 ```bash
-./bin/docker-sim inventory destroy
+docker-sim inventory destroy
 ```
 
 When creating your own runbook, copy the same structure: choose a template,
@@ -197,20 +171,20 @@ use a new unique `basename` in `inventory_plan.yaml`, or run the manual cleanup
 helper:
 
 ```bash
-./bin/aws_cleanup_project "$PROJECT"
+docker-sim aws_cleanup_project /workspace
 ```
 
 Preview the AWS commands without deleting anything:
 
 ```bash
-./bin/aws_cleanup_project --dry-run "$PROJECT"
+docker-sim aws_cleanup_project --dry-run /workspace
 ```
 
 If `inventory apply` fails with `InvalidSubnet.Conflict`, the configured
 `cidr_block` already overlaps an existing subnet in the target VPC. Re-run:
 
 ```bash
-./bin/aws_inventory_values --team Cloud eu-west-2
+docker-sim aws_inventory_values --team Cloud eu-west-2
 ```
 
 Then pick an unused `/24` inside the printed VPC CIDR and update
@@ -221,11 +195,9 @@ Then pick an unused `/24` inside the printed VPC CIDR and update
 Create the project:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-ec2 regression-single-dc
-cp ./examples/multi-dc/regression-single-dc-3nodes.inventory_plan.yaml ./simulator-projects/regression-single-dc/inventory_plan.yaml
-cp ./examples/multi-dc/smoke-tests.yaml ./simulator-projects/regression-single-dc/tests.yaml
-export PROJECT="$(pwd)/simulator-projects/regression-single-dc"
-python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+docker-sim tutorial-init aws-regression-single-dc regression-single-dc
+export PROJECT="$SIMULATOR_WORKSPACE/projects/regression-single-dc"
+docker-sim python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
 Fill in real values for `basename`, `owner`, `region`, `availability_zone`,
@@ -234,8 +206,8 @@ Fill in real values for `basename`, `owner`, `region`, `availability_zone`,
 Provision, install, observe, run, and destroy:
 
 ```bash
-./bin/docker-sim inventory apply
-./bin/docker-sim sh -lc 'cat inventory.yaml'
+docker-sim inventory apply
+docker-sim sh -lc 'cat inventory.yaml'
 # Continue with the shared install, verify, observe, run, and destroy flow above.
 ```
 
@@ -249,11 +221,9 @@ uses small `c5` sizes for members and load generators.
 Create the project:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-single-region
-cp ./examples/multi-dc/managed-single-region-2az-3nodes.inventory_plan.yaml ./simulator-projects/multidc-single-region/inventory_plan.yaml
-cp ./examples/multi-dc/smoke-tests.yaml ./simulator-projects/multidc-single-region/tests.yaml
-export PROJECT="$(pwd)/simulator-projects/multidc-single-region"
-python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+docker-sim tutorial-init aws-multidc-single-region multidc-single-region
+export PROJECT="$SIMULATOR_WORKSPACE/projects/multidc-single-region"
+docker-sim python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
 Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
@@ -265,8 +235,8 @@ Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
 Provision, install, observe, run, and destroy:
 
 ```bash
-./bin/docker-sim inventory apply
-./bin/docker-sim sh -lc 'cat inventory.yaml'
+docker-sim inventory apply
+docker-sim sh -lc 'cat inventory.yaml'
 # Continue with the shared install, verify, observe, run, and destroy flow above.
 ```
 
@@ -275,11 +245,9 @@ Provision, install, observe, run, and destroy:
 Create the project:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-two-region
-cp ./examples/multi-dc/managed-two-region-3nodes.inventory_plan.yaml ./simulator-projects/multidc-two-region/inventory_plan.yaml
-cp ./examples/multi-dc/smoke-tests.yaml ./simulator-projects/multidc-two-region/tests.yaml
-export PROJECT="$(pwd)/simulator-projects/multidc-two-region"
-python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+docker-sim tutorial-init aws-multidc-two-region multidc-two-region
+export PROJECT="$SIMULATOR_WORKSPACE/projects/multidc-two-region"
+docker-sim python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
 Fill in real values for `basename`, `owner`, region-specific AMIs if needed, and
@@ -295,8 +263,8 @@ The load generator, MC, and observability host stay in `dc-a`.
 Provision, install, observe, run, and destroy:
 
 ```bash
-./bin/docker-sim inventory apply
-./bin/docker-sim sh -lc 'cat inventory.yaml'
+docker-sim inventory apply
+docker-sim sh -lc 'cat inventory.yaml'
 # Continue with the shared install, verify, observe, run, and destroy flow above.
 ```
 
@@ -305,11 +273,9 @@ Provision, install, observe, run, and destroy:
 Create a 5-member single-region 3-AZ project:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-node-failover
-cp ./examples/multi-dc/managed-single-region-3az-5nodes.inventory_plan.yaml ./simulator-projects/multidc-node-failover/inventory_plan.yaml
-cp ./examples/multi-dc/enterprise-failover-10m-tests.yaml ./simulator-projects/multidc-node-failover/tests.yaml
-export PROJECT="$(pwd)/simulator-projects/multidc-node-failover"
-python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+docker-sim tutorial-init aws-node-failover multidc-node-failover
+export PROJECT="$SIMULATOR_WORKSPACE/projects/multidc-node-failover"
+docker-sim python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
 Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
@@ -320,23 +286,23 @@ Provision and install with the shared runbook flow. Then choose one member host 
 `dc-b`:
 
 ```bash
-export FAILOVER_HOST=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(next(host for host,data in hosts.items() if data.get("dc") == "dc-b"))')
+export FAILOVER_HOST=$(docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(next(host for host,data in hosts.items() if data.get("dc") == "dc-b"))')
 echo "$FAILOVER_HOST"
 ```
 
 Start the 10 minute test in one terminal:
 
 ```bash
-./bin/docker-sim perftest run
+docker-sim perftest run
 ```
 
 After the test has been running for at least 60 seconds, restart the selected
 member from another terminal:
 
 ```bash
-./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOST"
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --dry-run
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --yes
+docker-sim inventory control probe --hosts "$FAILOVER_HOST"
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --dry-run
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --yes
 ```
 
 The expected result is a completed run with a visible temporary member loss in
@@ -347,11 +313,9 @@ MC and Prometheus/Grafana, followed by the member returning before the run ends.
 Create the project:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-3az-dc-failover
-cp ./examples/multi-dc/managed-single-region-3az-5nodes.inventory_plan.yaml ./simulator-projects/multidc-3az-dc-failover/inventory_plan.yaml
-cp ./examples/multi-dc/enterprise-failover-10m-tests.yaml ./simulator-projects/multidc-3az-dc-failover/tests.yaml
-export PROJECT="$(pwd)/simulator-projects/multidc-3az-dc-failover"
-python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+docker-sim tutorial-init aws-dc-failover multidc-3az-dc-failover
+export PROJECT="$SIMULATOR_WORKSPACE/projects/multidc-3az-dc-failover"
+docker-sim python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
 Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
@@ -366,23 +330,23 @@ This scenario fails the singleton DC in the 2/2/1 layout:
 Choose all member hosts in `dc-c`:
 
 ```bash
-export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("dc") == "dc-c"))')
+export FAILOVER_HOSTS=$(docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("dc") == "dc-c"))')
 echo "$FAILOVER_HOSTS"
 ```
 
 Start the 10 minute test in one terminal:
 
 ```bash
-./bin/docker-sim perftest run
+docker-sim perftest run
 ```
 
 After the test has been running for at least 60 seconds, restart the `dc-c`
 member from another terminal:
 
 ```bash
-./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOSTS"
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --dry-run
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --yes
+docker-sim inventory control probe --hosts "$FAILOVER_HOSTS"
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --dry-run
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --yes
 ```
 
 The expected result is a completed run where the cluster survives the temporary
@@ -393,11 +357,9 @@ loss of the one-member DC and converges after `dc-c` rejoins.
 Create the project:
 
 ```bash
-docker run --rm -it -v "$(pwd)/simulator-projects:/workspace" -v "$(pwd)/mvnrepo:/root/.m2" "$SIM_IMAGE" perftest create --template hazelcast5-multidc-ec2 multidc-2az-stretched-failover
-cp ./examples/multi-dc/managed-single-region-2az-4nodes.inventory_plan.yaml ./simulator-projects/multidc-2az-stretched-failover/inventory_plan.yaml
-cp ./examples/multi-dc/enterprise-failover-10m-tests.yaml ./simulator-projects/multidc-2az-stretched-failover/tests.yaml
-export PROJECT="$(pwd)/simulator-projects/multidc-2az-stretched-failover"
-python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
+docker-sim tutorial-init aws-stretched-failover multidc-2az-stretched-failover
+export PROJECT="$SIMULATOR_WORKSPACE/projects/multidc-2az-stretched-failover"
+docker-sim python3 -c 'from pathlib import Path; import os; p = Path(os.environ["PROJECT"]) / "tests.yaml"; p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
 Fill in real values for `basename`, `owner`, `ami`, `vpc_id`, and
@@ -414,23 +376,23 @@ host remain available in `dc-a` while the remote AZ is restarted.
 To exercise a full AZ failure, choose all member hosts in `dc-b`:
 
 ```bash
-export FAILOVER_HOSTS=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("dc") == "dc-b"))')
+export FAILOVER_HOSTS=$(docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; print(",".join(host for host,data in hosts.items() if data.get("dc") == "dc-b"))')
 echo "$FAILOVER_HOSTS"
 ```
 
 Start the 10 minute test in one terminal:
 
 ```bash
-./bin/docker-sim perftest run
+docker-sim perftest run
 ```
 
 After the test has been running for at least 60 seconds, restart the `dc-b`
 members from another terminal:
 
 ```bash
-./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOSTS"
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --dry-run
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --yes
+docker-sim inventory control probe --hosts "$FAILOVER_HOSTS"
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --dry-run
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOSTS" --lapse-seconds 120 --yes
 ```
 
 The expected result is a completed run where MC and Prometheus/Grafana show the
@@ -441,23 +403,23 @@ To exercise a smaller member failure instead of a full AZ failure, choose one
 member host from `dc-b`:
 
 ```bash
-export FAILOVER_HOST=$(./bin/docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; selected=[host for host,data in hosts.items() if data.get("dc") == "dc-b"]; print(selected[0])')
+export FAILOVER_HOST=$(docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); hosts=inv["nodes"]["hosts"]; selected=[host for host,data in hosts.items() if data.get("dc") == "dc-b"]; print(selected[0])')
 echo "$FAILOVER_HOST"
 ```
 
 Start the 10 minute test in one terminal:
 
 ```bash
-./bin/docker-sim perftest run
+docker-sim perftest run
 ```
 
 After the test has been running for at least 60 seconds, restart that single
 member from another terminal:
 
 ```bash
-./bin/docker-sim inventory control probe --hosts "$FAILOVER_HOST"
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --dry-run
-./bin/docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --yes
+docker-sim inventory control probe --hosts "$FAILOVER_HOST"
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --dry-run
+docker-sim inventory control kill-members --hosts "$FAILOVER_HOST" --lapse-seconds 120 --yes
 ```
 
 The expected result is a completed run where the cluster remains available while
@@ -490,7 +452,7 @@ The examples below use `eu-central-1`, but you can replace that region with any 
 First inspect the AMI you already used successfully in `eu-west-2`:
 
 ```bash
-aws ec2 describe-images \
+docker-sim aws ec2 describe-images \
   --region eu-west-2 \
   --image-ids ami-03ceeb33c1e4abcd1 \
   --query 'Images[].{ImageId:ImageId,Name:Name,Owner:ImageOwnerAlias,OwnerId:OwnerId,Created:CreationDate,PlatformDetails:PlatformDetails,Description:Description}' \
@@ -500,7 +462,7 @@ aws ec2 describe-images \
 Print just the source image name:
 
 ```bash
-aws ec2 describe-images \
+docker-sim aws ec2 describe-images \
   --region eu-west-2 \
   --image-ids ami-03ceeb33c1e4abcd1 \
   --query 'Images[0].Name' \
@@ -512,7 +474,7 @@ Then search for the same image family in `eu-central-1` by owner and name patter
 ```bash
 export AMI_OWNER_ID=099720109477
 export IMAGE_NAME_PATTERN='ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*'
-aws ec2 describe-images \
+docker-sim aws ec2 describe-images \
   --region eu-central-1 \
   --owners "$AMI_OWNER_ID" \
   --filters "Name=name,Values=$IMAGE_NAME_PATTERN" "Name=state,Values=available" \
@@ -523,7 +485,7 @@ aws ec2 describe-images \
 If the source image is Ubuntu 22.04 from Canonical, this shortcut usually works well:
 
 ```bash
-aws ec2 describe-images \
+docker-sim aws ec2 describe-images \
   --region eu-central-1 \
   --owners 099720109477 \
   --filters \
@@ -537,7 +499,7 @@ aws ec2 describe-images \
 Show the default VPC and its CIDR:
 
 ```bash
-aws ec2 describe-vpcs \
+docker-sim aws ec2 describe-vpcs \
   --region eu-central-1 \
   --filters Name=is-default,Values=true \
   --query 'Vpcs[].{VpcId:VpcId,Cidr:CidrBlock}' \
@@ -547,7 +509,7 @@ aws ec2 describe-vpcs \
 Show all VPCs in the region:
 
 ```bash
-aws ec2 describe-vpcs \
+docker-sim aws ec2 describe-vpcs \
   --region eu-central-1 \
   --query 'Vpcs[].{Name:Tags[?Key==`Name`]|[0].Value,VpcId:VpcId,Cidr:CidrBlock,Default:IsDefault}' \
   --output table
@@ -557,7 +519,7 @@ Show the Internet Gateway attached to one VPC:
 
 ```bash
 export VPC_ID=vpc-...
-aws ec2 describe-internet-gateways \
+docker-sim aws ec2 describe-internet-gateways \
   --region eu-central-1 \
   --filters Name=attachment.vpc-id,Values="$VPC_ID" \
   --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
@@ -567,7 +529,7 @@ aws ec2 describe-internet-gateways \
 Show all Internet Gateways in the region:
 
 ```bash
-aws ec2 describe-internet-gateways \
+docker-sim aws ec2 describe-internet-gateways \
   --region eu-central-1 \
   --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
   --output table
@@ -576,7 +538,7 @@ aws ec2 describe-internet-gateways \
 Show existing subnets in one VPC so you can choose a free subnet CIDR:
 
 ```bash
-aws ec2 describe-subnets \
+docker-sim aws ec2 describe-subnets \
   --region eu-central-1 \
   --filters Name=vpc-id,Values="$VPC_ID" \
   --query 'Subnets[].{SubnetId:SubnetId,Az:AvailabilityZone,Cidr:CidrBlock,Name:Tags[?Key==`Name`]|[0].Value}' \
@@ -591,7 +553,7 @@ example uses `10.50.0.0/16` in `eu-central-1`.
 Create the VPC:
 
 ```bash
-aws ec2 create-vpc \
+docker-sim aws ec2 create-vpc \
   --region eu-central-1 \
   --cidr-block 10.50.0.0/16 \
   --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=simulator-multidc-eu-central-1}]'
@@ -606,7 +568,7 @@ export VPC_ID=vpc-...
 Enable DNS support:
 
 ```bash
-aws ec2 modify-vpc-attribute \
+docker-sim aws ec2 modify-vpc-attribute \
   --region eu-central-1 \
   --vpc-id "$VPC_ID" \
   --enable-dns-support '{"Value":true}'
@@ -615,7 +577,7 @@ aws ec2 modify-vpc-attribute \
 Enable DNS hostnames:
 
 ```bash
-aws ec2 modify-vpc-attribute \
+docker-sim aws ec2 modify-vpc-attribute \
   --region eu-central-1 \
   --vpc-id "$VPC_ID" \
   --enable-dns-hostnames '{"Value":true}'
@@ -624,7 +586,7 @@ aws ec2 modify-vpc-attribute \
 Create the Internet Gateway:
 
 ```bash
-aws ec2 create-internet-gateway \
+docker-sim aws ec2 create-internet-gateway \
   --region eu-central-1 \
   --tag-specifications 'ResourceType=internet-gateway,Tags=[{Key=Name,Value=simulator-multidc-eu-central-1-igw}]'
 ```
@@ -638,7 +600,7 @@ export IGW_ID=igw-...
 Attach it to the VPC:
 
 ```bash
-aws ec2 attach-internet-gateway \
+docker-sim aws ec2 attach-internet-gateway \
   --region eu-central-1 \
   --internet-gateway-id "$IGW_ID" \
   --vpc-id "$VPC_ID"
@@ -647,7 +609,7 @@ aws ec2 attach-internet-gateway \
 Verify the VPC:
 
 ```bash
-aws ec2 describe-vpcs \
+docker-sim aws ec2 describe-vpcs \
   --region eu-central-1 \
   --vpc-ids "$VPC_ID" \
   --query 'Vpcs[].{VpcId:VpcId,Cidr:CidrBlock,Name:Tags[?Key==`Name`]|[0].Value}' \
@@ -657,7 +619,7 @@ aws ec2 describe-vpcs \
 Verify the Internet Gateway attachment:
 
 ```bash
-aws ec2 describe-internet-gateways \
+docker-sim aws ec2 describe-internet-gateways \
   --region eu-central-1 \
   --internet-gateway-ids "$IGW_ID" \
   --query 'InternetGateways[].{IgwId:InternetGatewayId,VpcId:Attachments[0].VpcId}' \
@@ -705,7 +667,7 @@ export IGW_ID=igw-...
 Inspect what still exists in the VPC:
 
 ```bash
-aws ec2 describe-subnets \
+docker-sim aws ec2 describe-subnets \
   --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$VPC_ID" \
   --query 'Subnets[].SubnetId' \
@@ -713,7 +675,7 @@ aws ec2 describe-subnets \
 ```
 
 ```bash
-aws ec2 describe-route-tables \
+docker-sim aws ec2 describe-route-tables \
   --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$VPC_ID" \
   --query 'RouteTables[].RouteTableId' \
@@ -721,7 +683,7 @@ aws ec2 describe-route-tables \
 ```
 
 ```bash
-aws ec2 describe-security-groups \
+docker-sim aws ec2 describe-security-groups \
   --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$VPC_ID" \
   --query 'SecurityGroups[].{GroupId:GroupId,Name:GroupName}' \
@@ -729,7 +691,7 @@ aws ec2 describe-security-groups \
 ```
 
 ```bash
-aws ec2 describe-instances \
+docker-sim aws ec2 describe-instances \
   --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$VPC_ID" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' \
@@ -737,7 +699,7 @@ aws ec2 describe-instances \
 ```
 
 ```bash
-aws ec2 describe-vpc-peering-connections \
+docker-sim aws ec2 describe-vpc-peering-connections \
   --region "$AWS_REGION" \
   --query 'VpcPeeringConnections[?AccepterVpcInfo.VpcId==`'"$VPC_ID"'` || RequesterVpcInfo.VpcId==`'"$VPC_ID"'`].VpcPeeringConnectionId' \
   --output table
@@ -747,13 +709,13 @@ Terminate any remaining instances:
 
 ```bash
 INSTANCE_IDS=(i-... i-...)
-aws ec2 terminate-instances \
+docker-sim aws ec2 terminate-instances \
   --region "$AWS_REGION" \
   --instance-ids "${INSTANCE_IDS[@]}"
 ```
 
 ```bash
-aws ec2 wait instance-terminated \
+docker-sim aws ec2 wait instance-terminated \
   --region "$AWS_REGION" \
   --instance-ids "${INSTANCE_IDS[@]}"
 ```
@@ -762,7 +724,7 @@ Delete any VPC peering connections:
 
 ```bash
 export PCX_ID=pcx-...
-aws ec2 delete-vpc-peering-connection \
+docker-sim aws ec2 delete-vpc-peering-connection \
   --region "$AWS_REGION" \
   --vpc-peering-connection-id "$PCX_ID"
 ```
@@ -771,7 +733,7 @@ Delete non-default security groups:
 
 ```bash
 export SG_ID=sg-...
-aws ec2 delete-security-group \
+docker-sim aws ec2 delete-security-group \
   --region "$AWS_REGION" \
   --group-id "$SG_ID"
 ```
@@ -779,7 +741,7 @@ aws ec2 delete-security-group \
 Inspect route table associations:
 
 ```bash
-aws ec2 describe-route-tables \
+docker-sim aws ec2 describe-route-tables \
   --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$VPC_ID" \
   --query 'RouteTables[].{RouteTableId:RouteTableId,Associations:Associations[*].{Id:RouteTableAssociationId,Main:Main}}' \
@@ -790,7 +752,7 @@ Disassociate each non-main route table association:
 
 ```bash
 export RTB_ASSOC_ID=rtbassoc-...
-aws ec2 disassociate-route-table \
+docker-sim aws ec2 disassociate-route-table \
   --region "$AWS_REGION" \
   --association-id "$RTB_ASSOC_ID"
 ```
@@ -799,7 +761,7 @@ Delete each non-main route table:
 
 ```bash
 export RTB_ID=rtb-...
-aws ec2 delete-route-table \
+docker-sim aws ec2 delete-route-table \
   --region "$AWS_REGION" \
   --route-table-id "$RTB_ID"
 ```
@@ -808,7 +770,7 @@ Delete the subnets:
 
 ```bash
 export SUBNET_ID=subnet-...
-aws ec2 delete-subnet \
+docker-sim aws ec2 delete-subnet \
   --region "$AWS_REGION" \
   --subnet-id "$SUBNET_ID"
 ```
@@ -816,14 +778,14 @@ aws ec2 delete-subnet \
 Detach and delete the Internet Gateway:
 
 ```bash
-aws ec2 detach-internet-gateway \
+docker-sim aws ec2 detach-internet-gateway \
   --region "$AWS_REGION" \
   --internet-gateway-id "$IGW_ID" \
   --vpc-id "$VPC_ID"
 ```
 
 ```bash
-aws ec2 delete-internet-gateway \
+docker-sim aws ec2 delete-internet-gateway \
   --region "$AWS_REGION" \
   --internet-gateway-id "$IGW_ID"
 ```
@@ -831,7 +793,7 @@ aws ec2 delete-internet-gateway \
 Delete the VPC:
 
 ```bash
-aws ec2 delete-vpc \
+docker-sim aws ec2 delete-vpc \
   --region "$AWS_REGION" \
   --vpc-id "$VPC_ID"
 ```

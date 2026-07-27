@@ -1,27 +1,81 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-if [[ -z "${PROJECT:-}" ]]; then
-    echo "ERROR: PROJECT is not set" >&2
-    echo "Set it to a Simulator project directory, for example:" >&2
-    echo '  export PROJECT="$(pwd)/simulator-projects/<project>"' >&2
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+workspace="$(cd "$script_dir/.." && pwd)"
+projects_dir="$workspace/projects"
+sim_image="${SIM_IMAGE:-hazelcast/simulator:latest}"
+
+usage() {
+    cat >&2 <<EOF
+Usage:
+  docker-sim tutorial-init <scenario> <project>
+  PROJECT=$projects_dir/<project> docker-sim <Simulator command> [arguments...]
+
+The launcher must be installed in <simulator-workspace>/bin. Projects belong
+under <simulator-workspace>/projects and the host Maven cache is ~/.m2.
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    usage
+    exit 2
+fi
+
+if [[ ! -d "$projects_dir" ]]; then
+    echo "ERROR: workspace projects directory does not exist: $projects_dir" >&2
     exit 1
 fi
 
-SIM_IMAGE="${SIM_IMAGE:-hazelcast/simulator:latest}"
-
-DOCKER_ARGS=(
-    run --rm -it
-    -v "$PROJECT:/workspace"
-    -v "$(pwd)/mvnrepo:/root/.m2"
-    -v ~/.aws:/root/.aws
-)
-
-if [[ -n "${HZ_LICENSEKEY:-}" ]]; then
-    DOCKER_ARGS+=(-e HZ_LICENSEKEY)
+if [[ ! -d "$HOME/.m2" || ! -r "$HOME/.m2" || ! -w "$HOME/.m2" ]]; then
+    echo "ERROR: ~/.m2 must exist and be readable and writable before running docker-sim" >&2
+    exit 1
 fi
 
-DOCKER_ARGS+=("$SIM_IMAGE" "$@")
+docker_args=(run --rm)
+if [[ -t 0 && -t 1 ]]; then
+    docker_args+=(-it)
+fi
 
-docker "${DOCKER_ARGS[@]}"
+if [[ "$1" == "tutorial-init" ]]; then
+    docker_args+=(-v "$projects_dir:/workspace")
+elif [[ -n "${PROJECT:-}" ]]; then
+    project="$(cd "$PROJECT" 2>/dev/null && pwd)" || {
+        echo "ERROR: PROJECT does not exist: $PROJECT" >&2
+        exit 1
+    }
+    case "$project/" in
+        "$projects_dir"/*) ;;
+        *)
+            echo "ERROR: PROJECT must be below $projects_dir" >&2
+            exit 1
+            ;;
+    esac
+    docker_args+=(-v "$project:/workspace")
+else
+    # Cloud authentication and access checks run before a tutorial project is
+    # selected. Keep them image-backed while exposing the workspace root.
+    docker_args+=(-v "$projects_dir:/workspace")
+fi
+
+docker_args+=(-v "$HOME/.m2:/root/.m2")
+
+# Cloud login and kubeconfig state are intentionally persisted on the host so
+# every provider command can run through this image-backed launcher.
+mkdir -p "$HOME/.aws" "$HOME/.config/gcloud" "$HOME/.kube"
+docker_args+=(-v "$HOME/.aws:/root/.aws")
+docker_args+=(-v "$HOME/.config/gcloud:/root/.config/gcloud")
+docker_args+=(-v "$HOME/.kube:/root/.kube")
+docker_args+=(-e USE_GKE_GCLOUD_AUTH_PLUGIN=True)
+if [[ -n "${AWS_PROFILE:-}" ]]; then
+    docker_args+=(-e AWS_PROFILE)
+fi
+if [[ -n "${AWS_REGION:-}" ]]; then
+    docker_args+=(-e AWS_REGION)
+fi
+if [[ -n "${HZ_LICENSEKEY:-}" ]]; then
+    docker_args+=(-e HZ_LICENSEKEY)
+fi
+
+exec docker "${docker_args[@]}" "$sim_image" "$@"

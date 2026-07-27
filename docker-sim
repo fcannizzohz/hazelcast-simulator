@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+
+SIMULATOR_REPO="$(cd "$(dirname "$0")" && pwd)"
+export SIMULATOR_REPO
+exec "$SIMULATOR_REPO/bin/docker-sim" "$@"

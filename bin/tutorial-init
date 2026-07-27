@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: tutorial-init <scenario> <project>
+
+Scenarios:
+  k8s-smoke
+  k8s-ap-cp
+  aws-regression-single-dc
+  aws-multidc-single-region
+  aws-multidc-two-region
+  aws-node-failover
+  aws-dc-failover
+  aws-stretched-failover
+EOF
+}
+
+if [[ $# -ne 2 ]]; then
+    usage
+    exit 2
+fi
+
+scenario="$1"
+project="$2"
+root="${SIMULATOR_HOME:-/opt/simulator}"
+examples="$root/examples"
+
+if [[ "$project" == */* || "$project" == "." || "$project" == ".." ]]; then
+    echo "ERROR: project must be a single directory name" >&2
+    exit 2
+fi
+
+case "$scenario" in
+    k8s-smoke)
+        template=hazelcast5-k8s-chaosmesh
+        assets=("$examples/k8s/smoke-3node/inventory_plan.yaml" "$examples/k8s/smoke-3node/tests.yaml" "$examples/k8s/smoke-3node/client-hazelcast.xml")
+        asset_dir="$examples/k8s/smoke-3node/chaos"
+        ;;
+    k8s-ap-cp)
+        template=hazelcast5-k8s-chaosmesh
+        assets=("$examples/k8s/single-zone-ap-cp/inventory_plan.yaml" "$examples/k8s/single-zone-ap-cp/hazelcast.yaml" "$examples/k8s/single-zone-ap-cp/client-hazelcast.xml" "$examples/k8s/single-zone-ap-cp/tests-ap-cp.yaml")
+        asset_dir="$examples/k8s/single-zone-ap-cp/chaos"
+        ;;
+    aws-regression-single-dc)
+        template=hazelcast5-ec2
+        assets=("$examples/multi-dc/regression-single-dc-3nodes.inventory_plan.yaml" "$examples/multi-dc/smoke-tests.yaml")
+        asset_dir=""
+        ;;
+    aws-multidc-single-region)
+        template=hazelcast5-multidc-ec2
+        assets=("$examples/multi-dc/managed-single-region-2az-3nodes.inventory_plan.yaml" "$examples/multi-dc/smoke-tests.yaml")
+        asset_dir=""
+        ;;
+    aws-multidc-two-region)
+        template=hazelcast5-multidc-ec2
+        assets=("$examples/multi-dc/managed-two-region-3nodes.inventory_plan.yaml" "$examples/multi-dc/smoke-tests.yaml")
+        asset_dir=""
+        ;;
+    aws-node-failover|aws-dc-failover)
+        template=hazelcast5-multidc-ec2
+        assets=("$examples/multi-dc/managed-single-region-3az-5nodes.inventory_plan.yaml" "$examples/multi-dc/enterprise-failover-10m-tests.yaml")
+        asset_dir=""
+        ;;
+    aws-stretched-failover)
+        template=hazelcast5-multidc-ec2
+        assets=("$examples/multi-dc/managed-single-region-2az-4nodes.inventory_plan.yaml" "$examples/multi-dc/enterprise-failover-10m-tests.yaml")
+        asset_dir=""
+        ;;
+    *)
+        echo "ERROR: unknown tutorial scenario: $scenario" >&2
+        usage
+        exit 2
+        ;;
+esac
+
+perftest create --template "$template" "$project"
+for asset in "${assets[@]}"; do
+    case "$(basename "$asset")" in
+        *.inventory_plan.yaml) cp "$asset" "$project/inventory_plan.yaml" ;;
+        smoke-tests.yaml|enterprise-failover-10m-tests.yaml) cp "$asset" "$project/tests.yaml" ;;
+        *) cp "$asset" "$project/" ;;
+    esac
+done
+if [[ -n "$asset_dir" ]]; then
+    cp -R "$asset_dir" "$project/"
+fi
+echo "Created tutorial project: /workspace/$project"
