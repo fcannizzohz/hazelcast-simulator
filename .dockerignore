@@ -22,6 +22,8 @@
 **/examples/
 **/*.md
 !requirements.txt
+!examples/
+!examples/**
 
 # Runtime files
 **/logs/

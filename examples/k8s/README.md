@@ -292,12 +292,21 @@ simulator:
 ```
 
 For GKE, build and push a checkout-specific image to a registry reachable by
-every cluster node:
+every cluster node. The GKE configuration in this tutorial uses AMD64
+`e2-standard-8` nodes, so publish a `linux/amd64` image. On an Apple Silicon
+host, a plain `docker build` produces an ARM image and GKE agents fail with
+`ImagePullBackOff` and `no match for platform in manifest`.
 
 ```bash
-docker build -t europe-west1-docker.pkg.dev/$GCP_PROJECT/simulator/simulator:dev .
-docker push europe-west1-docker.pkg.dev/$GCP_PROJECT/simulator/simulator:dev
+export RUNTIME_SIM_IMAGE=europe-west1-docker.pkg.dev/$GCP_PROJECT/simulator/simulator:dev
+docker buildx build --platform linux/amd64 --push -t "$RUNTIME_SIM_IMAGE" .
+docker buildx imagetools inspect "$RUNTIME_SIM_IMAGE"
 ```
+
+Before continuing, confirm the inspection output includes
+`Platform: linux/amd64`. The CLI image used by `docker-sim` may remain native to
+your workstation; only the `simulator.image` used by Kubernetes Pods must match
+the node architecture.
 
 ```yaml
 simulator:
@@ -1070,6 +1079,27 @@ docker-sim kubectl get events -n simulator --sort-by=.lastTimestamp
 
 Confirm the cluster supports external load balancers, or use NodePort or
 explicit endpoint overrides.
+
+### Simulator agents are stuck in `ImagePullBackOff`
+
+```bash
+docker-sim kubectl get pods -n simulator -o wide
+docker-sim kubectl get events -n simulator --sort-by=.lastTimestamp
+```
+
+If the events contain `no match for platform in manifest`, the registry image
+does not support the node CPU architecture. For the AMD64 GKE nodes used in
+this tutorial, rebuild and push the runtime image with:
+
+```bash
+docker buildx build --platform linux/amd64 --push -t "$RUNTIME_SIM_IMAGE" .
+docker buildx imagetools inspect "$RUNTIME_SIM_IMAGE"
+```
+
+Confirm the manifest lists `Platform: linux/amd64`, then rerun
+`docker-sim inventory install k8s`. It reuses the existing cluster and retries
+the agent Pods. For other image-pull errors, use the event message to check the
+image name, registry credentials, and node registry access.
 
 ### Topology verification fails
 

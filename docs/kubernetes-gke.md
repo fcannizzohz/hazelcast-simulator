@@ -19,6 +19,10 @@ Hazelcast members are operator-managed. Kubernetes test suites therefore use
 load generators as `node_hosts` and the Hazelcast service as `member_hosts`.
 Set `simulator.image` to an image containing the Simulator build that the pods
 will execute, and set `simulator.loadgenerators.count` for fixed capacity.
+The image must support the CPU architecture of the Kubernetes nodes; for the
+AMD64 GKE tutorial nodes, publish a `linux/amd64` runtime image. The
+[Kubernetes tutorial](../examples/k8s/README.md#6-configure-the-simulator-runtime)
+includes the build and manifest verification commands.
 
 ## Safe lifecycle
 
