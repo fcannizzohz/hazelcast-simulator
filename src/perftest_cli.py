@@ -13,6 +13,7 @@ The available commands are:
     kill_java   Kills all Java processes   
     report      Generate performance report 
     report_grafana Generate Grafana dashboards from a performance report
+    export_observability Export a run and Prometheus snapshot as a local Grafana bundle
 '''
 
 
@@ -72,6 +73,11 @@ class PerftestCli:
         from simulator.perftest_report_grafana import PerftestReportGrafanaCli
 
         PerftestReportGrafanaCli(sys.argv[2:])
+
+    def export_observability(self):
+        from simulator.observability_export import ObservabilityExportCli
+
+        ObservabilityExportCli(sys.argv[2:])
 
 
 if __name__ == '__main__':

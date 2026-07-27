@@ -6,8 +6,10 @@ started by this stack.
 
 ## Prerequisites
 
-Use an AWS template that has both the `mc` and `observability` inventory groups. The install command
-requires exactly one provisioned `mc` host and at least one `observability` host.
+Use an AWS template that has both the `mc` and `observability` inventory groups, or a Kubernetes template with
+`mc.enabled: true` and `observability.enabled: true`.
+
+For AWS, the install command requires exactly one provisioned `mc` host and at least one `observability` host.
 
 Set both groups in `inventory_plan.yaml`:
 
@@ -28,6 +30,8 @@ The AWS templates start Management Center with the Prometheus exporter enabled:
 ```
 
 ## Install
+
+### AWS
 
 Provision the infrastructure and install the stack:
 
@@ -60,15 +64,45 @@ inventory install observability --member-hosts nodes --member-port 5701 --cluste
 If `mc` is not provisioned, the command exits before running Ansible and tells you to set
 `mc.count: 1`.
 
+### Kubernetes
+
+Kubernetes observability is installed by the Kubernetes installer rather than the AWS Ansible installer:
+
+```bash
+inventory apply
+inventory install k8s
+```
+
+The installer renders Prometheus and Grafana into `.simulator-k8s/generated.yaml` when
+`observability.enabled: true`. Prometheus scrapes the Management Center service in the same namespace. Grafana uses
+the same dashboard JSON files and provisioning provider from `observability/grafana` that the AWS stack uses.
+
+For OpenShift-style exposure, set:
+
+```yaml
+kubernetes:
+    provider: openshift
+    service_type: Route
+```
+
 ## Access
 
 After installation, open:
 
 - Grafana: `http://<observability-public-ip>:3000`
-- Prometheus: `http://<observability-public-ip>:9090`
+- Prometheus on AWS: `http://<observability-public-ip>:9090`
 
-The install command prints the Management Center, Grafana, and Prometheus endpoints at the end of a successful run.
-You can also find the public IPs in `inventory.yaml` under the `mc` and `observability` groups.
+Kubernetes Prometheus is intentionally a cluster-internal service. Access it with
+`kubectl port-forward service/prometheus 9090:9090 -n <namespace>` when direct inspection is needed. The Kubernetes install waits for
+Management Center, Prometheus, and Grafana before completing. Cluster service DNS names are written to the `mc` and
+`observability` inventory groups; explicit external exposure remains optional.
+
+Kubernetes chaos executions append start, injection, recovery, failure, and stop records to
+`.simulator-k8s/chaos-events.jsonl`. The coordinator copies the current event stream into the run directory as
+`chaos-events.jsonl`, allowing report and Grafana timelines to be correlated with latency, jitter, partitions, and
+other Chaos Mesh profiles. When Grafana is enabled, the same lifecycle transitions are published through its annotation
+API using a temporary port forward. Annotation failure is reported but does not abort the experiment.
+`inventory control probe --hosts nodes` also reports tracked active executions.
 
 ## Dashboards
 
@@ -103,7 +137,8 @@ inventory control diagnostics-on --cluster workers --auto-off-minutes 60
 inventory control diagnostics-off --cluster workers
 ```
 
-The commands call the Management Center diagnostics configuration REST API on the `mc` inventory group. The API
+The commands call the Management Center diagnostics configuration REST API on the `mc` inventory group. For Kubernetes
+inventories, simulator resolves the Management Center service or Route from the active Kubernetes context. The API
 requires Enterprise Management Center licensing and a configured cluster connection. Management Center can toggle
 diagnostics on and off, but it cannot change the diagnostics log directory dynamically; the default worker script
 preconfigures member diagnostics output under `<worker-dir>/diagnostics` so generated files are downloaded with the
@@ -158,6 +193,42 @@ Destroy the whole AWS environment, including observability:
 ```bash
 inventory destroy
 ```
+
+## Export a local Grafana bundle
+
+Export a completed run before destroying its observability stack. The command
+copies the run artifacts, generates portable report dashboards, snapshots the
+complete retained Prometheus TSDB, and writes a self-contained Docker Compose
+bundle. The default destination includes the current export timestamp:
+
+```bash
+docker-sim perftest export_observability runs/<test>/<run-timestamp>
+# runs/<test>/<run-timestamp>/observability-export-YYYYMMDD-HHMMSS/
+```
+
+Use `--output-dir` to choose a destination or `--overwrite` to replace one:
+
+```bash
+docker-sim perftest export_observability runs/<test>/<run-timestamp> \
+  --output-dir /path/to/export --overwrite
+```
+
+Change into the exported directory and start its local stack:
+
+```bash
+cd runs/<test>/<run-timestamp>/observability-export-YYYYMMDD-HHMMSS
+docker compose up -d
+```
+
+Browse Grafana at `http://localhost:3000` and Prometheus at
+`http://localhost:9090`. The **Hazelcast** folder uses the Prometheus snapshot;
+the **Simulator Run** folder contains report dashboards with their run data
+embedded through Grafana TestData. Stop the local stack with `docker compose down`.
+
+The snapshot contains every metric retained by the source Prometheus instance,
+not only the selected run. Treat the export directory as a potentially sensitive
+artifact. The source Prometheus must still be reachable when the export runs;
+the local bundle remains usable after `inventory destroy`.
 
 ## Troubleshooting
 

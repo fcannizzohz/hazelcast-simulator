@@ -13,6 +13,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=15d"
       - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
 
   grafana:
     image: grafana/grafana:latest
