@@ -1,7 +1,6 @@
 - name: k8s-3node-latency-smoke
   duration: 60s
   repetitions: 1
-  clients: 1
   loadgenerator_count: 1
   node_count: 0
   driver: hazelcast5

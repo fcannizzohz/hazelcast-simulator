@@ -3,7 +3,6 @@
   repetitions: 1
   parallel: true
   fail_fast: false
-  clients: 2
   loadgenerator_count: 2
   node_count: 0
   driver: hazelcast5
@@ -49,7 +48,6 @@
   repetitions: 1
   parallel: true
   fail_fast: false
-  clients: 2
   loadgenerator_count: 2
   node_count: 0
   driver: hazelcast5
@@ -95,7 +93,6 @@
   repetitions: 1
   parallel: true
   fail_fast: false
-  clients: 2
   loadgenerator_count: 2
   node_count: 0
   driver: hazelcast5
