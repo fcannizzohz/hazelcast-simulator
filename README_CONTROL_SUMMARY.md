@@ -3,12 +3,13 @@
 This file should be treated as the working spec for the `inventory control` feature.
 
 This change adds a new `inventory control ...` command family for failure testing and
-runtime diagnostics control on Terraform-managed AWS simulator projects.
+runtime diagnostics control on managed simulator projects.
 
 ## What Problem It Solves
 
 Simulator could run benchmarks on managed AWS clusters, but it did not have a focused,
-host-level way to inject member failures and then bring the same member back.
+host-level way to inject member failures and then bring the same member back. Kubernetes
+clusters need the same inventory-facing operations translated into pod and ChaosMesh actions.
 
 This change adds that missing control path so we can:
 
@@ -23,11 +24,12 @@ This change adds that missing control path so we can:
 
 The new control flow is intentionally narrow:
 
-- supported only for `provisioner: terraform` with `terraform_plan: aws`
+- AWS worker controls support `provisioner: terraform` with `terraform_plan: aws`
+- Kubernetes pod controls support `provisioner: kubernetes`
 - failure-cycle commands are supported only for explicit `--hosts` selections
 - diagnostics commands target the configured Management Center host, defaulting to the
   `mc` inventory group
-- does not touch `existing-cluster`
+- does not touch unmanaged `existing-cluster` inventories
 - member failure commands operate on member workers, not broad host-level Java process
   cleanup
 - diagnostics commands use the Management Center REST API and require Enterprise MC
@@ -56,6 +58,13 @@ The following commands are implemented today through `inventory control`:
   - supports an auto-off timeout
 - `diagnostics-off`
   - disables Hazelcast diagnostics dynamically through Management Center
+- `split-brain`
+  - Kubernetes only in the current implementation
+  - temporarily partitions two inventory groups through ChaosMesh `NetworkChaos`
+- `chaos-list`, `chaos-render`, `chaos-run`, `chaos-status`, `chaos-stop`
+  - Kubernetes-only additive profile interface
+  - supports structured inventory targets and validated raw Chaos Mesh manifests
+  - supports finite experiments, Workflows, and explicitly persistent Schedules
 
 Failure-cycle commands support:
 
@@ -86,6 +95,32 @@ inventory control diagnostics-status --cluster workers
 inventory control diagnostics-on --cluster workers --auto-off-minutes 60
 inventory control diagnostics-off --cluster workers
 ```
+
+Kubernetes inventories resolve Management Center from the active service or Route instead
+of requiring SSH access to an `mc` VM.
+
+Example Kubernetes workflow:
+
+```bash
+inventory control probe --hosts nodes
+inventory control kill-members --hosts dc-a --lapse-seconds 30 --dry-run
+inventory control graceful-restart-members --hosts workers-0 --lapse-seconds 10 --yes
+inventory control split-brain --partitions dc-a/dc-b --lapse-seconds 60 --dry-run
+```
+
+`kill-members` uses ChaosMesh `pod-failure` for a positive lapse and `pod-kill` for a zero lapse;
+otherwise it deletes selected pods and waits for replacement pods. `start-spread-seconds` is
+honored for Kubernetes member cycles. `split-brain` requires ChaosMesh, supports exactly two
+inventory partitions, resolves group or pod expressions to current pod names, rejects overlap,
+and deletes the experiment in a guaranteed cleanup path.
+
+`kill-members`, `split-brain`, and Kubernetes latency injection are reserved built-in profiles. Their command names and
+fallback behavior remain stable when `chaosmesh.profiles` is absent. User profiles cannot override the `_builtin`
+namespace and share the same manifest rendering, ownership labels, status tracking, and cleanup engine.
+
+Custom profiles target `nodes`, DC groups, pod names, `loadgenerators`, `coordinator`, or `simulator`. Workload scope is
+restricted to the configured namespace. Cluster and cloud scopes require both inventory opt-in and
+`--allow-elevated`. Every destructive profile command requires `--yes` unless `--dry-run` is used.
 
 The diagnostics commands call:
 
@@ -160,8 +195,8 @@ be treated as next steps for the feature.
 
 All current and planned destructive control commands should follow these rules:
 
-- managed AWS only
-- explicit host selection only
+- use only the active managed AWS or Kubernetes backend
+- require explicit inventory host/group or profile selection
 - no `existing-cluster` support
 - no `--all-members`
 - `--yes` required unless `--dry-run`

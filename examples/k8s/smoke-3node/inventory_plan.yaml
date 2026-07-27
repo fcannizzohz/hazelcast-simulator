@@ -1,0 +1,75 @@
+provisioner: kubernetes
+
+kubernetes:
+    provider: existing
+    instance: simulator-smoke-3node
+    namespace: simulator-smoke
+    context: null
+    service_type: ClusterIP
+    manage_namespace: true
+    delete_namespace_on_destroy: true
+    topology_key: topology.kubernetes.io/zone
+    wait_timeout_seconds: 600
+
+operator:
+    install: true
+    version: 5.17.0
+    namespace: hz-system
+    release_name: simulator-hazelcast-operator
+    helm_set: []
+
+hazelcast:
+    name: workers
+    cluster_name: workers
+    cluster_size: 3
+    repository: docker.io/hazelcast/hazelcast-enterprise
+    version: 5.7.0
+    license_secret_name: hazelcast-license
+    persistence:
+        enabled: false
+    resources:
+        requests:
+            cpu: "1"
+            memory: 2Gi
+    pdb:
+        enabled: true
+        max_unavailable: 1
+
+dcs:
+    - name: dc-a
+      members: 3
+
+mc:
+    enabled: false
+
+observability:
+    enabled: false
+
+chaosmesh:
+    enabled: true
+    # A smoke-test project owns this add-on. Use false only when the cluster
+    # administrator already installed Chaos Mesh.
+    install: true
+    namespace: chaos-mesh
+    runtime: containerd
+    socket_path: /run/containerd/containerd.sock
+    default_duration: 90s
+    profiles_file: chaos/profiles.yaml
+
+simulator:
+    image: registry.example.com/hazelcast-simulator:latest
+    image_pull_policy: IfNotPresent
+    coordinator:
+        active_deadline_seconds: 900
+        retain_on_failure: true
+        resources:
+            requests:
+                cpu: "1"
+                memory: 1Gi
+    loadgenerators:
+        count: 1
+        reset_before_run: true
+        resources:
+            requests:
+                cpu: "1"
+                memory: 2Gi

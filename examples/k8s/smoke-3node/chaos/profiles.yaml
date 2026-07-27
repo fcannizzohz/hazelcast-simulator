@@ -1,0 +1,16 @@
+smoke-member-delay:
+    kind: NetworkChaos
+    targets: nodes
+    target:
+        targets: nodes
+        mode: all
+    mode: all
+    duration: 90s
+    scope: workload
+    spec:
+        action: delay
+        direction: both
+        delay:
+            latency: 2ms
+            jitter: 2ms
+            correlation: "25"

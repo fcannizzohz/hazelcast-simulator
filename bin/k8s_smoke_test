@@ -1,0 +1,71 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: k8s_smoke_test [--keep-cluster]
+
+Creates a disposable three-worker kind cluster, installs the Kubernetes
+Simulator smoke example, injects 2 ms Chaos Mesh delay between members, runs a
+verified map workload, and tears everything down. HZ_LICENSEKEY is required.
+EOF
+}
+
+keep_cluster=false
+if [[ "${1:-}" == "--keep-cluster" ]]; then
+    keep_cluster=true
+elif [[ $# -ne 0 ]]; then
+    usage >&2
+    exit 1
+fi
+
+if [[ -z "${HZ_LICENSEKEY:-}" ]]; then
+    echo "ERROR: HZ_LICENSEKEY is required for the Hazelcast Enterprise smoke test" >&2
+    exit 1
+fi
+
+for tool in docker kind kubectl; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "ERROR: $tool is required" >&2
+        exit 1
+    }
+done
+
+repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
+cluster_name="simulator-k8s-smoke"
+runtime_image="hazelcast-simulator:k8s-smoke"
+projects_dir="$repo_dir/projects"
+mkdir -p "$projects_dir"
+project_dir="$(mktemp -d "$projects_dir/hazelcast-simulator-k8s-smoke.XXXXXX")"
+
+cleanup() {
+    if [[ "$keep_cluster" != true ]]; then
+        kind delete cluster --name "$cluster_name" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$project_dir"
+}
+trap cleanup EXIT
+
+kind create cluster --name "$cluster_name" \
+    --config "$repo_dir/examples/k8s/smoke-3node/kind-3workers.yaml"
+docker build -t "$runtime_image" "$repo_dir"
+kind load docker-image "$runtime_image" --name "$cluster_name"
+
+cp -R "$repo_dir/examples/k8s/smoke-3node/." "$project_dir/"
+perl -pi -e "s#registry\.example\.com/hazelcast-simulator:latest#$runtime_image#" \
+    "$project_dir/inventory_plan.yaml"
+
+export PROJECT="$project_dir"
+export SIM_IMAGE="$runtime_image"
+export SIMULATOR_REPO="$repo_dir"
+
+"$repo_dir/docker-sim" inventory apply
+"$repo_dir/docker-sim" inventory install k8s
+"$repo_dir/docker-sim" inventory import
+"$repo_dir/docker-sim" inventory control probe --hosts nodes
+"$repo_dir/docker-sim" inventory control chaos-run --profile smoke-member-delay --detach --yes
+"$repo_dir/docker-sim" perftest run tests.yaml --pattern k8s-3node-latency-smoke
+kubectl get hazelcast workers -n simulator-smoke -o jsonpath='{.status.phase}' | grep -qx Running
+
+"$repo_dir/docker-sim" inventory destroy || true
+echo "Kubernetes smoke test completed"

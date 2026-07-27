@@ -3,6 +3,7 @@ import argparse
 import json
 import sys
 import time
+import yaml
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -24,6 +25,16 @@ def ensure_managed_aws_inventory_plan(inventory_plan):
     terraform_plan = inventory_plan.get("terraform_plan")
     if terraform_plan != "aws":
         fail(f"Inventory control is only supported for terraform plan [aws], found [{terraform_plan}]")
+
+
+def is_kubernetes_inventory_plan(inventory_plan):
+    return inventory_plan.get("provisioner") == "kubernetes"
+
+
+def load_control_inventory_plan():
+    from simulator.util import load_yaml_file
+
+    return load_yaml_file("inventory_plan.yaml")
 
 
 def resolve_hosts(host_pattern):
@@ -89,7 +100,12 @@ def build_host_schedule(hosts, start_spread_seconds):
 
 def build_diagnostics_url(mc_host, cluster_name, mc_port):
     encoded_cluster = quote(cluster_name, safe="")
-    return f"http://{public_ip(mc_host)}:{mc_port}/rest/clusters/{encoded_cluster}/diagnostics/config"
+    address = public_ip(mc_host)
+    if address.startswith("http://") or address.startswith("https://"):
+        base = address.rstrip("/")
+    else:
+        base = f"http://{address}:{mc_port}"
+    return f"{base}/rest/clusters/{encoded_cluster}/diagnostics/config"
 
 
 def build_diagnostics_payload(enabled, auto_off_minutes):
@@ -172,9 +188,15 @@ class InventoryControlCli:
             diagnostics-status       Read member diagnostics state through Management Center
             graceful-restart-members  Gracefully stop member workers, wait, then restart them
             kill-members              Kill member workers, wait, then restart them
+            chaos-list                List built-in/custom chaos profiles and executions
+            chaos-render              Render a custom Chaos Mesh profile without applying it
+            chaos-run                 Run a custom Chaos Mesh profile
+            chaos-status              Read tracked Chaos Mesh execution status
+            chaos-stop                Stop a tracked Chaos Mesh execution
             member_restart  Restarts dead managed member workers from their worker directories
             member_signal   Sends TERM or KILL to live managed member workers
             probe           Probes managed node hosts and reports agent/worker state
+            split-brain     Partitions selected inventory groups using the active provider backend
         '''
 
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -189,16 +211,83 @@ class InventoryControlCli:
 
         getattr(self, command)(argv[1:])
 
+    def chaos_list(self, argv):
+        parser = argparse.ArgumentParser(description="List Chaos Mesh profiles and tracked executions")
+        parser.parse_args(argv)
+        inventory_plan = self._kubernetes_control_inventory()
+        from simulator.chaos_kubernetes import chaos_list
+        info(json.dumps(chaos_list(inventory_plan), indent=2, sort_keys=True))
+
+    def chaos_render(self, argv):
+        parser = argparse.ArgumentParser(description="Render a configured Chaos Mesh profile")
+        parser.add_argument("--profile", required=True)
+        parser.add_argument("--duration", help="Override the configured experiment duration.")
+        parser.add_argument("--allow-elevated", action="store_true")
+        args = parser.parse_args(argv)
+        inventory_plan = self._kubernetes_control_inventory()
+        from simulator.chaos_kubernetes import chaos_render
+        result = chaos_render(inventory_plan, args.profile, args.duration, args.allow_elevated)
+        info(yaml.safe_dump(result, sort_keys=False))
+
+    def chaos_run(self, argv):
+        parser = argparse.ArgumentParser(description="Run a configured Chaos Mesh profile")
+        parser.add_argument("--profile", required=True)
+        parser.add_argument("--duration", help="Override the configured experiment duration.")
+        parser.add_argument("--detach", action="store_true")
+        parser.add_argument("--allow-elevated", action="store_true")
+        parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--yes", action="store_true")
+        args = parser.parse_args(argv)
+        require_yes_if_not_dry_run(args, "run chaos profile")
+        inventory_plan = self._kubernetes_control_inventory()
+        from simulator.chaos_kubernetes import chaos_run
+        result = chaos_run(
+            inventory_plan, args.profile, args.duration, args.detach, args.dry_run, args.allow_elevated
+        )
+        info(json.dumps(result, indent=2, sort_keys=True))
+
+    def chaos_status(self, argv):
+        parser = argparse.ArgumentParser(description="Read tracked Chaos Mesh execution status")
+        parser.add_argument("--execution-id")
+        args = parser.parse_args(argv)
+        inventory_plan = self._kubernetes_control_inventory()
+        from simulator.chaos_kubernetes import chaos_status
+        info(json.dumps(chaos_status(inventory_plan, args.execution_id), indent=2, sort_keys=True))
+
+    def chaos_stop(self, argv):
+        parser = argparse.ArgumentParser(description="Stop a tracked Chaos Mesh execution")
+        parser.add_argument("--execution-id", required=True)
+        parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--yes", action="store_true")
+        args = parser.parse_args(argv)
+        require_yes_if_not_dry_run(args, "stop chaos execution")
+        inventory_plan = self._kubernetes_control_inventory()
+        from simulator.chaos_kubernetes import chaos_stop
+        info(json.dumps(chaos_stop(inventory_plan, args.execution_id, args.dry_run), indent=2, sort_keys=True))
+
+    def _kubernetes_control_inventory(self):
+        inventory_plan = load_control_inventory_plan()
+        if not is_kubernetes_inventory_plan(inventory_plan):
+            fail("Configurable Chaos Mesh profiles are supported only for Kubernetes inventories")
+        return inventory_plan
+
     def probe(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-                                         description='Probe managed AWS node hosts for simulator agent/worker state')
+                                         description='Probe managed node hosts for simulator agent/worker state')
         parser.add_argument("--hosts", required=True, help="Explicit target hosts.")
 
         args = parser.parse_args(argv)
 
-        from simulator.util import load_yaml_file, run_parallel
+        from simulator.util import run_parallel
 
-        inventory_plan = load_yaml_file("inventory_plan.yaml")
+        inventory_plan = load_control_inventory_plan()
+        if is_kubernetes_inventory_plan(inventory_plan):
+            from simulator.inventory_kubernetes import control_probe
+            log_header("Control probe")
+            info(json.dumps(control_probe(inventory_plan, args.hosts), indent=2, sort_keys=True))
+            log_header("Control probe: Done")
+            return
+
         ensure_managed_aws_inventory_plan(inventory_plan)
 
         hosts = resolve_hosts(args.hosts)
@@ -286,8 +375,8 @@ class InventoryControlCli:
 
     def diagnostics_status(self, argv):
         args = self._diagnostics_args(argv, "Read member diagnostics state through Management Center")
-        self._load_control_inventory()
-        mc_host = resolve_single_host(args.mc_hosts, "Management Center")
+        inventory_plan = self._load_control_inventory()
+        mc_host = self._resolve_management_center(inventory_plan, args.mc_hosts)
 
         log_header("Control diagnostics status")
         info(f"mc_hosts={args.mc_hosts}")
@@ -304,8 +393,8 @@ class InventoryControlCli:
         if args.auto_off_minutes < 0:
             fail("--auto-off-minutes must be non-negative")
 
-        self._load_control_inventory()
-        mc_host = resolve_single_host(args.mc_hosts, "Management Center")
+        inventory_plan = self._load_control_inventory()
+        mc_host = self._resolve_management_center(inventory_plan, args.mc_hosts)
 
         log_header("Control diagnostics on")
         info(f"mc_hosts={args.mc_hosts}")
@@ -331,8 +420,8 @@ class InventoryControlCli:
     def diagnostics_off(self, argv):
         args = self._diagnostics_args(argv, "Disable member diagnostics through Management Center")
 
-        self._load_control_inventory()
-        mc_host = resolve_single_host(args.mc_hosts, "Management Center")
+        inventory_plan = self._load_control_inventory()
+        mc_host = self._resolve_management_center(inventory_plan, args.mc_hosts)
 
         log_header("Control diagnostics off")
         info(f"mc_hosts={args.mc_hosts}")
@@ -366,10 +455,16 @@ class InventoryControlCli:
         return parser.parse_args(argv)
 
     def _load_control_inventory(self):
-        from simulator.util import load_yaml_file
+        inventory_plan = load_control_inventory_plan()
+        if not is_kubernetes_inventory_plan(inventory_plan):
+            ensure_managed_aws_inventory_plan(inventory_plan)
+        return inventory_plan
 
-        inventory_plan = load_yaml_file("inventory_plan.yaml")
-        ensure_managed_aws_inventory_plan(inventory_plan)
+    def _resolve_management_center(self, inventory_plan, mc_hosts):
+        if is_kubernetes_inventory_plan(inventory_plan):
+            from simulator.inventory_kubernetes import management_center_endpoint
+            return {"public_ip": management_center_endpoint(inventory_plan)}
+        return resolve_single_host(mc_hosts, "Management Center")
 
     def _member_cycle(self, argv, signal_name, header):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -393,9 +488,25 @@ class InventoryControlCli:
 
         require_yes_if_not_dry_run(args, f"run the {signal_name} member cycle")
 
-        from simulator.util import load_yaml_file, run_parallel
+        from simulator.util import run_parallel
 
-        inventory_plan = load_yaml_file("inventory_plan.yaml")
+        inventory_plan = load_control_inventory_plan()
+        if is_kubernetes_inventory_plan(inventory_plan):
+            if signal_name == "term":
+                from simulator.inventory_kubernetes import control_graceful_restart_members
+                result = control_graceful_restart_members(
+                    inventory_plan, args.hosts, args.lapse_seconds, args.dry_run, args.start_spread_seconds
+                )
+            else:
+                from simulator.inventory_kubernetes import control_kill_members
+                result = control_kill_members(
+                    inventory_plan, args.hosts, args.lapse_seconds, args.dry_run, args.start_spread_seconds
+                )
+            log_header(header)
+            info(json.dumps(result, indent=2, sort_keys=True))
+            log_header(f"{header}: Done")
+            return
+
         ensure_managed_aws_inventory_plan(inventory_plan)
 
         hosts = resolve_hosts(args.hosts)
@@ -423,6 +534,35 @@ class InventoryControlCli:
                 "member_cycle": host_state,
             }, indent=2, sort_keys=True))
         log_header(f"{header}: Done")
+
+    def split_brain(self, argv):
+        parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                         description='Temporarily partitions selected inventory groups')
+        parser.add_argument("--partitions", required=True,
+                            help="Partition grammar: group-a/group-b or host1,host2/host3,host4.")
+        parser.add_argument("--lapse-seconds", type=int, required=True,
+                            help="Seconds to keep the partition active.")
+        parser.add_argument("--dry-run", action="store_true",
+                            help="Show the generated provider action without applying it.")
+        parser.add_argument("--yes", action="store_true",
+                            help="Required unless --dry-run is set.")
+        args = parser.parse_args(argv)
+
+        if args.lapse_seconds < 0:
+            fail("--lapse-seconds must be non-negative")
+        require_yes_if_not_dry_run(args, "run split-brain")
+
+        inventory_plan = load_control_inventory_plan()
+        if is_kubernetes_inventory_plan(inventory_plan):
+            from simulator.inventory_kubernetes import control_split_brain
+            log_header("Control split-brain")
+            result = control_split_brain(inventory_plan, args.partitions, args.lapse_seconds, args.dry_run)
+            info(json.dumps(result, indent=2, sort_keys=True))
+            log_header("Control split-brain: Done")
+            return
+
+        ensure_managed_aws_inventory_plan(inventory_plan)
+        fail("split-brain is not implemented for AWS inventories yet.")
 
 
 if __name__ == '__main__':

@@ -9,6 +9,8 @@ from simulator.ssh import Ssh
 
 
 def __agent_stop(agent):
+    if agent.get("provider") == "kubernetes":
+        return
     ssh = Ssh(public_ip(agent), ssh_user(agent), ssh_options(agent))
     ssh.exec(f"hazelcast-simulator/bin/hidden/kill_agent")
 

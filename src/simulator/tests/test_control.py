@@ -73,6 +73,13 @@ class TestControl(unittest.TestCase):
             url,
         )
 
+    def test_build_diagnostics_url_accepts_absolute_management_center_url(self):
+        url = build_diagnostics_url({"public_ip": "https://mc.apps.example.test"}, "workers", 8080)
+        self.assertEqual(
+            "https://mc.apps.example.test/rest/clusters/workers/diagnostics/config",
+            url,
+        )
+
     def test_build_diagnostics_payload(self):
         self.assertEqual(
             {

@@ -2,6 +2,7 @@ FROM ubuntu:24.04
 
 # Declare build arguments
 ARG PYTHON_VERSION=3.11
+ARG TARGETARCH
 
 # Install runtime dependencies with retry mechanism
 RUN apt-get update && apt-get install -y software-properties-common \
@@ -25,6 +26,7 @@ RUN apt-get update && apt-get install -y software-properties-common \
         dnsutils \
         iputils-ping \
         ca-certificates \
+        apt-transport-https \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Eclipse Temurin JDK 17
@@ -49,24 +51,57 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
     echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list && \
     apt-get update && apt-get install -y terraform && rm -rf /var/lib/apt/lists/*
 
-# Install AWS CLI
-RUN python${PYTHON_VERSION} -m pip install --no-cache-dir awscli
+# Install Kubernetes, Helm, and Google Cloud tooling for Kubernetes provisioners.
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    apt-get update && apt-get install -y google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)" && \
+    curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" && \
+    chmod +x /usr/local/bin/kubectl
+
+RUN HELM_VERSION="v3.15.4" && \
+    curl -fsSLo /tmp/helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" && \
+    tar -xzf /tmp/helm.tar.gz -C /tmp && \
+    mv /tmp/linux-${TARGETARCH}/helm /usr/local/bin/helm && \
+    chmod +x /usr/local/bin/helm && \
+    rm -rf /tmp/helm.tar.gz /tmp/linux-${TARGETARCH}
+
+# Install the self-contained AWS CLI v2 so its Python dependencies cannot
+# conflict with the versions pinned by Simulator.
+RUN if [ "${TARGETARCH}" = "amd64" ]; then AWS_ARCH="x86_64"; \
+    elif [ "${TARGETARCH}" = "arm64" ]; then AWS_ARCH="aarch64"; \
+    else echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1; fi && \
+    curl -fsSLo /tmp/awscliv2.zip "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" && \
+    unzip -q /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install && \
+    rm -rf /tmp/aws /tmp/awscliv2.zip
 
 # Install Python dependencies
 RUN --mount=type=bind,source=requirements.txt,target=/tmp/requirements.txt \
     python${PYTHON_VERSION} -m pip install --no-cache-dir --break-system-packages --ignore-installed -r /tmp/requirements.txt
 
 # Create simulator directory structure
-RUN mkdir -p /opt/simulator/lib /opt/simulator/drivers /opt/simulator/src /opt/simulator/templates /opt/simulator/conf /opt/simulator/playbooks /opt/simulator/observability /opt/simulator/bin /opt/simulator/user-lib
+RUN mkdir -p /opt/simulator/lib /opt/simulator/drivers /opt/simulator/src /opt/simulator/templates /opt/simulator/examples /opt/simulator/conf /opt/simulator/playbooks /opt/simulator/observability /opt/simulator/bin /opt/simulator/user-lib
 
 # Copy pre-built Java artifacts (lib and drivers directories)
 COPY lib/ /opt/simulator/lib/
 COPY drivers/ /opt/simulator/drivers/
 COPY user-lib/ /opt/simulator/user-lib/
 
+# The checked-in source configuration is authoritative. The local drivers/
+# directory contains generated build output and may predate source changes.
+COPY java/drivers/driver-hazelcast4plus/conf/ /tmp/driver-hazelcast4plus-conf/
+RUN for driver in driver-hazelcast4 driver-hazelcast-enterprise4 driver-hazelcast5 driver-hazelcast-enterprise5; do \
+        cp -a /tmp/driver-hazelcast4plus-conf/. "/opt/simulator/drivers/${driver}/conf/"; \
+    done && \
+    rm -rf /tmp/driver-hazelcast4plus-conf
+
 # Copy Python source code and configurations
 COPY src/ /opt/simulator/src/
 COPY templates/ /opt/simulator/templates/
+COPY examples/ /opt/simulator/examples/
 COPY conf/ /opt/simulator/conf/
 COPY playbooks/ /opt/simulator/playbooks/
 COPY observability/ /opt/simulator/observability/

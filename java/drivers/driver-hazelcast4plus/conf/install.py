@@ -10,6 +10,15 @@ from simulator.ssh import Ssh
 def _upload(host, artifact_ids, version, driver):
     info(f"     {host['public_ip']} starting")
 
+    if host.get("provider") == "kubernetes":
+        from simulator.remote import copy_to_remote, remote_exec
+        dest = f"/opt/simulator/driver-lib/{driver}/maven-{version}"
+        remote_exec(host, f"mkdir -p {dest}")
+        for artifact_id in artifact_ids:
+            copy_to_remote(host, _get_local_jar_path(artifact_id, version), dest)
+        info(f"     {host['public_ip']} done")
+        return
+
     ssh = Ssh(host['public_ip'], host['ssh_user'], host['ssh_options'])
     ssh.exec("mkdir -p hazelcast-simulator/driver-lib/" + driver + "/")
     dest = f"hazelcast-simulator/driver-lib/{driver}/maven-{version}"
@@ -149,7 +158,7 @@ def exec(args:DriverInstallArgs):
     hosts = []
 
     node_hosts = args.test.get("node_hosts")
-    if node_hosts is not None:
+    if node_hosts is not None and args.test.get("node_count") != 0:
         hosts.extend(load_hosts(inventory_path=args.inventory_path, host_pattern=node_hosts))
 
     loadgenerator_hosts = args.test.get("loadgenerator_hosts")

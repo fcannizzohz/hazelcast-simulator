@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import re
+import shlex
+import shutil
+import subprocess
+from pathlib import Path
+
+
+OWNER_LABEL = "simulator.hazelcast.com/managed"
+INSTANCE_LABEL = "simulator.hazelcast.com/instance"
+PROVIDER_STATE = Path(".simulator-k8s/provider-state.yaml")
+
+
+def log(message):
+    print(message, flush=True)
+
+
+def load_yaml(file_path):
+    try:
+        import yaml
+    except ImportError:
+        raise SystemExit("ERROR: PyYAML is required. Run from the simulator virtualenv or install pyyaml.")
+    with file_path.open() as stream:
+        return yaml.safe_load(stream) or {}
+
+
+def load_plan(project_dir):
+    plan_path = project_dir / "inventory_plan.yaml"
+    if not plan_path.exists():
+        raise SystemExit(f"ERROR: inventory_plan.yaml not found in [{project_dir}]")
+    plan = load_yaml(plan_path)
+    if plan.get("provisioner") != "kubernetes":
+        raise SystemExit(f"ERROR: [{plan_path}] does not use provisioner: kubernetes")
+    if (plan.get("kubernetes") or {}).get("provider", "static") != "gke":
+        raise SystemExit(f"ERROR: [{plan_path}] does not use kubernetes.provider: gke")
+    return plan
+
+
+def required(mapping, key, setting):
+    value = mapping.get(key)
+    if value is None or value == "":
+        raise SystemExit(f"ERROR: missing required setting [{setting}]")
+    return str(value)
+
+
+def location(gke):
+    if gke.get("region"):
+        return "--region", str(gke["region"])
+    return "--zone", required(gke, "zone", "gke.zone or gke.region")
+
+
+def instance_name(plan):
+    kubernetes = plan.get("kubernetes") or {}
+    hazelcast = plan.get("hazelcast") or {}
+    configured = kubernetes.get("instance")
+    value = configured or f"{kubernetes.get('namespace', 'default')}-{hazelcast.get('name', 'hazelcast')}"
+    value = re.sub(r"[^a-z0-9.-]+", "-", str(value).lower()).strip("-.")
+    return value[:63] or "simulator"
+
+
+def identity(plan):
+    gke = plan.get("gke") or {}
+    location_flag, location_value = location(gke)
+    return {
+        "provider": "gke",
+        "project": required(gke, "project_id", "gke.project_id"),
+        "cluster": required(gke, "cluster_name", "gke.cluster_name"),
+        "location_type": location_flag.removeprefix("--"),
+        "location": location_value,
+    }
+
+
+def provider_state(project_dir):
+    state_path = project_dir / PROVIDER_STATE
+    return load_yaml(state_path) if state_path.exists() else {}
+
+
+def cluster_delete_allowed(plan, state):
+    expected = identity(plan)
+    actual = {key: state.get(key) for key in expected}
+    owned = bool(state.get("created") and actual == expected)
+    return owned or bool((plan.get("gke") or {}).get("delete_existing_cluster", False))
+
+
+def run(cmd, *, dry_run=False, capture_output=False, tolerate_failure=True):
+    log("+ " + shlex.join([str(item) for item in cmd]))
+    if dry_run:
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    result = subprocess.run(cmd, text=True, capture_output=capture_output)
+    if result.returncode != 0 and not tolerate_failure:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise SystemExit(f"ERROR: command failed with exit code {result.returncode}: {detail}")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        log(f"  WARN: command failed with exit code {result.returncode}: {detail}")
+    elif not capture_output and result.stdout:
+        log(result.stdout.rstrip())
+    return result
+
+
+def kubectl_base(plan):
+    cmd = ["kubectl"]
+    context = (plan.get("kubernetes") or {}).get("context")
+    if context:
+        cmd.extend(["--context", str(context)])
+    return cmd
+
+
+def kubectl(plan, args, **kwargs):
+    return run(kubectl_base(plan) + args, **kwargs)
+
+
+def get_credentials(plan, dry_run):
+    target = identity(plan)
+    return run([
+        "gcloud", "container", "clusters", "get-credentials", target["cluster"],
+        "--project", target["project"], f"--{target['location_type']}", target["location"],
+    ], dry_run=dry_run, capture_output=True).returncode == 0
+
+
+def cluster_accessible(plan, dry_run):
+    return kubectl(
+        plan,
+        ["version", "--request-timeout=10s"],
+        dry_run=dry_run,
+        capture_output=True,
+    ).returncode == 0
+
+
+def cleanup_labelled_resources(plan, dry_run):
+    kubernetes = plan.get("kubernetes") or {}
+    namespace = str(kubernetes.get("namespace", "default"))
+    selector = f"{INSTANCE_LABEL}={instance_name(plan)},{OWNER_LABEL}=true"
+    resources = [
+        "hazelcast", "managementcenter", "deployment", "statefulset", "job", "pod",
+        "service", "serviceaccount", "role", "rolebinding", "configmap", "secret",
+        "persistentvolumeclaim", "poddisruptionbudget",
+    ]
+
+    log("\n== Chaos Mesh experiments ==")
+    discovery = kubectl(plan, [
+        "api-resources", "--api-group=chaos-mesh.org", "--namespaced=true", "-o", "name",
+    ], dry_run=dry_run, capture_output=True)
+    chaos_resources = discovery.stdout.splitlines() if discovery.returncode == 0 and discovery.stdout else []
+    if dry_run and not chaos_resources:
+        chaos_resources = ["podchaos.chaos-mesh.org", "networkchaos.chaos-mesh.org"]
+    for resource in chaos_resources:
+        kubectl(plan, [
+            "delete", resource, "-A", "-l", selector, "--ignore-not-found=true",
+        ], dry_run=dry_run)
+
+    log(f"\n== Namespace {namespace}: Simulator resources ==")
+    for resource in resources:
+        kubectl(plan, [
+            "delete", resource, "-n", namespace, "-l", selector, "--ignore-not-found=true",
+        ], dry_run=dry_run)
+
+    log("\n== Cluster-scoped Simulator resources ==")
+    kubectl(plan, [
+        "delete", "storageclass", "-l", selector, "--ignore-not-found=true",
+    ], dry_run=dry_run)
+
+    if kubernetes.get("delete_namespace_on_destroy", False):
+        owned = kubectl(plan, [
+            "get", "namespace", namespace, "-o", "json",
+        ], dry_run=dry_run, capture_output=True)
+        labels = {}
+        if owned.returncode == 0 and owned.stdout:
+            try:
+                labels = (json.loads(owned.stdout).get("metadata") or {}).get("labels") or {}
+            except json.JSONDecodeError:
+                log(f"  WARN: could not parse namespace [{namespace}]")
+        if dry_run or (labels.get(OWNER_LABEL) == "true" and labels.get(INSTANCE_LABEL) == instance_name(plan)):
+            kubectl(plan, ["delete", "namespace", namespace, "--ignore-not-found=true"], dry_run=dry_run)
+        else:
+            log(f"Leaving namespace [{namespace}] intact because it is not owned by this Simulator instance")
+
+
+def uninstall_addons(plan, dry_run):
+    context = (plan.get("kubernetes") or {}).get("context")
+    for section, default_release, default_namespace in (
+        ("chaosmesh", "chaos-mesh", "chaos-mesh"),
+        ("operator", "simulator-hazelcast-operator", "hz-system"),
+    ):
+        config = plan.get(section) or {}
+        if not (config.get("install") and config.get("uninstall_on_destroy", False)):
+            continue
+        cmd = [
+            "helm", "uninstall", str(config.get("release_name", default_release)),
+            "-n", str(config.get("namespace", default_namespace)), "--ignore-not-found",
+        ]
+        if context:
+            cmd.extend(["--kube-context", str(context)])
+        run(cmd, dry_run=dry_run)
+
+
+def delete_cluster(plan, state, dry_run):
+    target = identity(plan)
+    if not cluster_delete_allowed(plan, state):
+        log("Leaving GKE cluster intact because it was not created by this Simulator project")
+        return
+    run([
+        "gcloud", "container", "clusters", "delete", target["cluster"],
+        "--project", target["project"], f"--{target['location_type']}", target["location"], "--quiet",
+    ], dry_run=dry_run)
+
+
+def cleanup_project(project_dir, dry_run):
+    plan = load_plan(project_dir)
+    if not dry_run:
+        for tool in ("gcloud", "kubectl"):
+            if not shutil.which(tool):
+                raise SystemExit(f"ERROR: {tool} is not installed or not on PATH")
+        needs_helm = any(
+            (plan.get(section) or {}).get("install")
+            and (plan.get(section) or {}).get("uninstall_on_destroy", False)
+            for section in ("chaosmesh", "operator")
+        )
+        if needs_helm and not shutil.which("helm"):
+            raise SystemExit("ERROR: helm is required to uninstall a managed add-on")
+
+    target = identity(plan)
+    state = provider_state(project_dir)
+    log(
+        f"Cleaning GKE resources for project [{project_dir}] cluster "
+        f"[{target['project']}/{target['location']}/{target['cluster']}]"
+    )
+    accessible = get_credentials(plan, dry_run) and cluster_accessible(plan, dry_run)
+    if accessible or dry_run:
+        cleanup_labelled_resources(plan, dry_run)
+        uninstall_addons(plan, dry_run)
+    elif cluster_delete_allowed(plan, state):
+        log("  WARN: cluster credentials are unavailable; skipping in-cluster cleanup before deleting the owned cluster")
+    else:
+        raise SystemExit(
+            "ERROR: cluster credentials are unavailable and the cluster is not project-owned; "
+            "refusing to leave labelled resources behind silently"
+        )
+    delete_cluster(plan, state, dry_run)
+    log("\nCleanup pass complete. Re-run the script if Google Cloud reported resources still being deleted.")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Delete stale GKE resources for a Simulator project using inventory_plan.yaml."
+    )
+    parser.add_argument("project_dir", help="Path to the Simulator project directory")
+    parser.add_argument("--dry-run", action="store_true", help="Print commands without executing them")
+    args = parser.parse_args()
+    cleanup_project(Path(args.project_dir).expanduser().resolve(), args.dry_run)
+
+
+if __name__ == "__main__":
+    main()

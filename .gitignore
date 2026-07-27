@@ -21,3 +21,4 @@ m2/
 myproject
 mvnrepo/
 tmp/
+.simulator-k8s/

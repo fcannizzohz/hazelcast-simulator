@@ -1,0 +1,38 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: rolling-failures
+spec:
+  entry: rolling-failures
+  templates:
+    - name: rolling-failures
+      templateType: Serial
+      children:
+        - first-failure
+        - pause
+        - second-failure
+    - name: first-failure
+      templateType: PodChaos
+      deadline: 30s
+      podChaos:
+        action: pod-failure
+        mode: one
+        selector:
+          namespaces:
+            - ${WORKLOAD_NAMESPACE}
+          labelSelectors:
+            app.kubernetes.io/instance: ${HAZELCAST_RESOURCE}
+    - name: pause
+      templateType: Suspend
+      deadline: 30s
+    - name: second-failure
+      templateType: PodChaos
+      deadline: 30s
+      podChaos:
+        action: pod-failure
+        mode: one
+        selector:
+          namespaces:
+            - ${WORKLOAD_NAMESPACE}
+          labelSelectors:
+            app.kubernetes.io/instance: ${HAZELCAST_RESOURCE}

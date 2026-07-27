@@ -34,7 +34,8 @@ def _configure_hazelcast_xml(nodes, args: DriverConfigureArgs, is_lite_member: b
     members_config = ""
     member_port = args.test.get('member_port', '5701')
     for host in nodes:
-        members_config = f"{members_config}<member>{host['private_ip']}:{member_port}</member>"
+        host_port = host.get('port', member_port)
+        members_config = f"{members_config}<member>{host['private_ip']}:{host_port}</member>"
     config = config.replace("<!--MEMBERS-->", members_config)
 
     if is_lite_member:
@@ -56,7 +57,8 @@ def _configure_client_hazelcast_xml(nodes, args: DriverConfigureArgs):
     members_config = ""
     member_port = args.test.get('member_port', '5701')
     for host in nodes:
-        members_config = f"{members_config}<address>{host['private_ip']}:{member_port}</address>"
+        host_port = host.get('port', member_port)
+        members_config = f"{members_config}<address>{host['private_ip']}:{host_port}</address>"
 
     config = config.replace("<!--MEMBERS-->", members_config)
     args.coordinator_params['file:client-hazelcast.xml'] = config
@@ -82,7 +84,7 @@ def _configure_worker_sh(args: DriverConfigureArgs):
 def exec(args: DriverConfigureArgs):
     info("Configure")
 
-    nodes_pattern = args.test.get("node_hosts")
+    nodes_pattern = args.test.get("member_hosts", args.test.get("node_hosts"))
     nodes = load_hosts(inventory_path=args.inventory_path, host_pattern=nodes_pattern)
 
     node_count = args.test.get("node_count")

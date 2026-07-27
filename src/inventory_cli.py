@@ -8,6 +8,7 @@ from os import path
 
 from inventory import load_hosts
 from simulator.control import InventoryControlCli
+from simulator.inventory_kubernetes import kubernetes_apply, kubernetes_destroy, kubernetes_import, kubernetes_install
 from simulator.inventory_terraform import terraform_import, terraform_destroy, terraform_apply
 from simulator.inventory_lab import lab_apply, lab_destroy
 from simulator.util import load_yaml_file, exit_with_error, simulator_home, shell, now_seconds
@@ -20,9 +21,9 @@ usage = '''inventory <command> [<args>]
 
 The available commands are:
     apply               Applies the plan and updates the inventory
-    control             Probes and controls managed AWS inventory hosts
+    control             Probes and controls managed inventory hosts
     destroy             Destroy the resources in the inventory
-    import              Imports the inventory from the terraform plan
+    import              Imports the inventory from the active provisioner
     install             Installs software on the inventory
     new_key             Creates a new public/private keypair
     shell               Executes a shell command on the inventory
@@ -39,6 +40,14 @@ default_url = "https://download.java.net/java/GA/jdk21/fd2272bbf8e04c3dbaee13770
 
 def ansible_extra_vars(**kwargs):
     return shlex.quote(json.dumps(kwargs))
+
+
+def default_ssh_hosts(default_pattern):
+    if path.exists(inventory_plan_path):
+        inventory_plan = load_yaml_file(inventory_plan_path)
+        if inventory_plan.get("provisioner") == "kubernetes":
+            return "simulator_agents"
+    return default_pattern
 
 examples = """
 Oracle JDK:
@@ -190,6 +199,7 @@ class InventoryInstallCli:
         The available commands are:
             java            Installs Java
             simulator       Installs Simulator
+            k8s             Installs Kubernetes-side Hazelcast resources
             perf            Installs Linux Perf
             async_profiler  Installs Async Profiler
             iperf3          Installs iperf3 Profiler
@@ -213,13 +223,20 @@ class InventoryInstallCli:
                                          description='Install Java')
         parser.add_argument("--url", help="The url of the JDK tar.gz file", default=default_url)
         parser.add_argument("--examples", help="Shows example urls", action='store_true')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.",
+                            default=default_ssh_hosts("all:!mc:!observability:!load_balancers"))
 
         args = parser.parse_args(argv)
 
         if args.examples:
             print(examples)
             return
+
+        if path.exists(inventory_plan_path):
+            inventory_plan = load_yaml_file(inventory_plan_path)
+            if inventory_plan.get("provisioner") == "kubernetes":
+                info(f"Java is provided by Kubernetes image [{(inventory_plan.get('simulator') or {}).get('image')}]")
+                return
 
         hosts = args.hosts
         url = args.url
@@ -234,6 +251,19 @@ class InventoryInstallCli:
             exit_with_error(f'Failed to install Java, exitcode={exitcode} command=[{cmd}])')
         log_header("Installing Java: Done")
 
+    def k8s(self, argv):
+        parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                         description='Install Kubernetes-side Hazelcast resources')
+        parser.parse_args(argv)
+
+        inventory_plan = load_yaml_file(inventory_plan_path)
+        if inventory_plan.get("provisioner") != "kubernetes":
+            exit_with_error("inventory install k8s requires provisioner: kubernetes")
+
+        log_header("Installing Kubernetes resources")
+        kubernetes_install(inventory_plan)
+        log_header("Installing Kubernetes resources: Done")
+
     def async_profiler(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install Async Profiler')
@@ -242,7 +272,7 @@ class InventoryInstallCli:
                             default="https://github.com/async-profiler/async-profiler/releases/download/v3.0/async-profiler-3.0-linux-x64.tar.gz")
         parser.add_argument("--hosts",
                             help="The target hosts.",
-                            default="all:!mc:!observability")
+                            default=default_ssh_hosts("all:!mc:!observability"))
 
         args = parser.parse_args(argv)
 
@@ -261,7 +291,8 @@ class InventoryInstallCli:
     def perf(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install Linux Perf')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.",
+                            default=default_ssh_hosts("all:!mc:!observability:!load_balancers"))
 
         args = parser.parse_args(argv)
 
@@ -277,8 +308,15 @@ class InventoryInstallCli:
     def simulator(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install Simulator')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.",
+                            default=default_ssh_hosts("all:!mc:!observability:!load_balancers"))
         args = parser.parse_args(argv)
+
+        if path.exists(inventory_plan_path):
+            inventory_plan = load_yaml_file(inventory_plan_path)
+            if inventory_plan.get("provisioner") == "kubernetes":
+                info(f"Simulator is provided by Kubernetes image [{(inventory_plan.get('simulator') or {}).get('image')}]")
+                return
 
         hosts = args.hosts
 
@@ -294,7 +332,8 @@ class InventoryInstallCli:
     def iperf3(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Install iperf3')
-        parser.add_argument("--hosts", help="The target hosts.", default="all:!mc:!observability:!load_balancers")
+        parser.add_argument("--hosts", help="The target hosts.",
+                            default=default_ssh_hosts("all:!mc:!observability:!load_balancers"))
         args = parser.parse_args(argv)
 
         hosts = args.hosts
@@ -368,7 +407,7 @@ class InventoryImportCli:
 
     def __init__(self, argv):
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-                                         description='Imports the inventory from a terraform installation.')
+                                         description='Imports the inventory from the active provisioner.')
         parser.parse_args(argv)
 
         log_header("Inventory import")
@@ -381,6 +420,8 @@ class InventoryImportCli:
         elif provisioner == "terraform":
             terraform_plan = inventory_plan["terraform_plan"]
             terraform_import(terraform_plan)
+        elif provisioner == "kubernetes":
+            kubernetes_import(inventory_plan)
         else:
             exit_with_error(f"Unrecognized provisioner [{provisioner}]")
 
@@ -413,6 +454,8 @@ class InventoryApplyCli:
                 return
             case "terraform":
                 terraform_apply(inventory_plan, force)
+            case "kubernetes":
+                kubernetes_apply(inventory_plan, force)
             case "lab":
                 lab_apply(inventory_plan)
             case _:
@@ -446,6 +489,8 @@ class InventoryDestroyCli:
                 return
             case "terraform":
                 terraform_destroy(inventory_plan, force=True)
+            case "kubernetes":
+                kubernetes_destroy(inventory_plan, force=True)
             case "lab":
                 lab_destroy()
             case _:
@@ -462,7 +507,7 @@ class InventoryShellCli:
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                          description='Executes a shell command on the inventory', )
         parser.add_argument("command", help="The command to execute", nargs='?')
-        parser.add_argument("--hosts", help="The target hosts.", default="all")
+        parser.add_argument("--hosts", help="The target hosts.", default=default_ssh_hosts("all"))
         parser.add_argument('-p', "--ping", help="Checks if the inventory is reachable", action='store_true')
 
         args = parser.parse_args(argv)
@@ -478,6 +523,9 @@ class InventoryShellCli:
 
     def remote_ping(self, hosts):
         log_header("Inventory Ping")
+        if self._kubernetes_shell("true", hosts):
+            log_header("Inventory Ping: Done")
+            return
         cmd = f"""ansible-playbook --limit {shlex.quote(hosts)} --inventory inventory.yaml \
                       {shlex.quote(simulator_home + '/playbooks/shell.yaml')} -e {ansible_extra_vars(cmd='exit 0')} """
         info(cmd)
@@ -490,6 +538,9 @@ class InventoryShellCli:
     def remote_shell(self, shell_cmd, hosts):
         log_header("Inventory Remote Shell")
         info(f"cmd: {shell_cmd}")
+        if self._kubernetes_shell(shell_cmd, hosts):
+            log_header("Inventory Remote Shell: Done")
+            return
         cmd = f"""ansible-playbook --limit {shlex.quote(hosts)} --inventory inventory.yaml \
                         {shlex.quote(simulator_home + '/playbooks/shell.yaml')} -e {ansible_extra_vars(cmd=shell_cmd)} """
         info(cmd)
@@ -499,6 +550,24 @@ class InventoryShellCli:
 
         log_header("Inventory Remote Shell: Done")
 
+    def _kubernetes_shell(self, command, hosts):
+        if not path.exists(inventory_plan_path):
+            return False
+        inventory_plan = load_yaml_file(inventory_plan_path)
+        if inventory_plan.get("provisioner") != "kubernetes":
+            return False
+        from simulator.remote import remote_exec
+        selected = load_hosts(inventory_path="inventory.yaml", host_pattern=hosts)
+        if not selected:
+            exit_with_error(f"No Kubernetes pods matched [{hosts}]")
+        for host in selected:
+            exitcode, output = remote_exec(host, command)
+            if output:
+                info(f"{host['public_ip']}:\n{output.rstrip()}")
+            if exitcode != 0:
+                exit_with_error(f"Remote command failed on Kubernetes pod [{host['public_ip']}]")
+        return True
+
 
 class TuneCli:
 
@@ -507,7 +576,7 @@ class TuneCli:
                                          description='Tunes the environment by configuring the set kernel parameters, '
                                                      'governor etc')
         parser.add_argument("environment", help="The type of environment to tune for", nargs='?', default="hazelcast")
-        parser.add_argument("--hosts", help="The target hosts.", default="all")
+        parser.add_argument("--hosts", help="The target hosts.", default=default_ssh_hosts("all"))
 
         args = parser.parse_args(argv)
         environment = args.environment
@@ -550,6 +619,13 @@ class InventoryInjectLatenciesCli:
         parser.add_argument("--interface", default="eth0", help="Network interface to apply latency on (default: eth0)")
         parser.add_argument("--rtt", action='store_true', help="Apply latency as round-trip time (halved for one-way)")
         parser.add_argument("--profiles", help="Path to the YAML file with advanced latency profiles")
+        parser.add_argument("--hosts", default="nodes", help="Source inventory group or pod expression")
+        parser.add_argument("--target-hosts", help="Optional destination inventory group or pod expression")
+        parser.add_argument("--jitter", type=int, default=0, help="Network delay jitter in milliseconds")
+        parser.add_argument("--correlation", type=int, default=0, help="Delay correlation percentage")
+        parser.add_argument("--duration", help="Experiment duration, for example 30s or 5m")
+        parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--yes", action="store_true")
 
         args = parser.parse_args(argv)
 
@@ -557,6 +633,32 @@ class InventoryInjectLatenciesCli:
         self.network_interface = args.interface
         self.rtt = args.rtt
         self.profiles = args.profiles
+
+        if path.exists(inventory_plan_path):
+            inventory_plan = load_yaml_file(inventory_plan_path)
+            if inventory_plan.get("provisioner") == "kubernetes":
+                if self.latency is None:
+                    exit_with_error("Kubernetes latency injection requires --latency")
+                if args.profiles:
+                    exit_with_error(
+                        "Kubernetes advanced chaos is configured under chaosmesh.profiles and run with inventory control chaos-run"
+                    )
+                if self.latency < 0 or args.jitter < 0 or not 0 <= args.correlation <= 100:
+                    exit_with_error(
+                        "--latency and --jitter must be non-negative and --correlation must be between 0 and 100"
+                    )
+                if not args.dry_run and not args.yes:
+                    exit_with_error("Refusing to inject Kubernetes latency without --yes; use --dry-run to inspect first")
+                from simulator.chaos_kubernetes import inject_latency
+                latency = self.latency / 2 if args.rtt else self.latency
+                duration = args.duration or (inventory_plan.get("chaosmesh") or {}).get("default_duration", "5m")
+                result = inject_latency(
+                    inventory_plan, args.hosts, args.target_hosts, latency,
+                    args.jitter, args.correlation, duration, args.dry_run,
+                )
+                info(json.dumps(result, indent=2, sort_keys=True))
+                log_header("Injecting Latencies: Done")
+                return
 
 
         # Construct the base command
@@ -587,10 +689,24 @@ class InventoryClearLatenciesCli:
             description='Clears latencies between inventory nodes'
         )
         parser.add_argument("--interface", default="eth0", help="Network interface to clear latency on (default: eth0)")
+        parser.add_argument("--execution-id", help="Specific Kubernetes latency execution to stop")
+        parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--yes", action="store_true")
 
         args = parser.parse_args(argv)
 
         self.network_interface = args.interface
+
+        if path.exists(inventory_plan_path):
+            inventory_plan = load_yaml_file(inventory_plan_path)
+            if inventory_plan.get("provisioner") == "kubernetes":
+                if not args.dry_run and not args.yes:
+                    exit_with_error("Refusing to clear Kubernetes latency without --yes; use --dry-run to inspect first")
+                from simulator.chaos_kubernetes import clear_latencies
+                result = clear_latencies(inventory_plan, args.execution_id, args.dry_run)
+                info(json.dumps(result, indent=2, sort_keys=True))
+                log_header("Clearing Latencies: Done")
+                return
 
         cmd = f"ansible-playbook --inventory inventory.yaml {simulator_home}/playbooks/clear_latencies.yaml"
 

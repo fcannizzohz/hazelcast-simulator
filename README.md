@@ -1,5 +1,16 @@
 # Hazelcast Simulator
 
+## Branch feature summary
+
+| Feature | What this branch adds | Where to start |
+| --- | --- | --- |
+| Image-backed workspaces | A `docker-sim` launcher, external workspace projects, shared `~/.m2` cache validation, and image-bundled tutorial assets. | [Example initialization](examples/README_INIT.md) |
+| Kubernetes and GKE | Provision or attach Kubernetes clusters; install Hazelcast, Management Center, observability, and optional Chaos Mesh; verify and tear down owned resources. | [Kubernetes tutorial](examples/k8s/README.md) |
+| AWS multi-DC scenarios | Managed EC2 scenarios for single-DC, multi-region, node failover, DC failover, and stretched-cluster testing. | [Multi-DC runbook](examples/multi-dc/README_TEST.md) |
+| Cluster controls and chaos | Member lifecycle controls, network/latency chaos profiles, diagnostics controls, and safe cleanup. | [Control command summary](README_CONTROL_SUMMARY.md) |
+| Observability and reports | Management Center, Prometheus, Grafana dashboards, diagnostics collection, Grafana report generation, and portable local exports. | [Observability guide](observability/README.md) |
+| AP/CP resilience coverage | Kubernetes AP/CP topology examples with CPMap traffic plus pod-failure and network-isolation exercises. | [AP/CP example](examples/k8s/README.md#single-zone-synthetic-apcp-example) |
+
 Hazelcast Simulator is a production simulator used to test Hazelcast and Hazelcast-based applications in clustered
 environments.
 It also allows you to create your own tests and perform them on your Hazelcast clusters and applications that are
@@ -272,10 +283,93 @@ Install the Simulator:
    inventory install simulator
    ```
 
+## Provisioning Kubernetes clusters
+
+Simulator can run Hazelcast, the coordinator, and all load generators inside Kubernetes.
+Use the `hazelcast5-k8s-chaosmesh` template for a complete project:
+
+See [examples/k8s/README.md](examples/k8s/README.md) for the complete GKE and
+existing Kubernetes tutorial.
+
+The tutorial also includes a single-zone synthetic `2-2-1` AP/CP scenario with
+CPMap traffic and Chaos Mesh pod-failure and network-isolation tests.
+
+   ```shell
+   perftest create --template hazelcast5-k8s-chaosmesh my-k8s-test
+   cd my-k8s-test
+   ```
+
+The Kubernetes workflow follows the existing inventory flow:
+
+   ```shell
+   inventory apply
+   inventory install k8s
+   perftest run
+   ```
+
+Set `provisioner: kubernetes` in `inventory_plan.yaml`. The `kubernetes.provider` value can be:
+
+- `existing`: use the current kubeconfig context and do not create or delete the cluster.
+- `gke`: create or attach to a GKE cluster using the `gke` section.
+
+The plan can install a pinned Hazelcast Platform Operator or verify an existing one. GKE cluster creation is
+idempotent, and attached clusters are not deleted by default. Existing providers never delete the target
+cluster. Generated resources are ownership-labelled; teardown refuses to delete resources owned by another project
+and retains namespaces and shared add-ons unless explicit deletion settings are enabled. Failed cleanup also retains
+the local ownership state so teardown can be retried safely.
+
+For GKE setup, `bin/gke_inventory_values` lists candidate regions, zones,
+networks, subnetworks, and machine types. `bin/gke_cleanup_project` provides
+ownership-labelled recovery cleanup when normal `inventory destroy` cannot
+finish; it preserves attached clusters unless deletion was explicitly enabled.
+
+The generated `inventory.yaml` keeps the simulator inventory UX:
+
+- `nodes` contains Hazelcast member pods.
+- `dc-a`, `dc-b`, and other groups are resolved from `dcs` and live Kubernetes topology labels.
+- `hazelcast`, `mc`, and `observability` contain cluster service DNS names.
+- `loadgenerators` and `simulator_agents` contain stable StatefulSet pod DNS names.
+
+Set `simulator.image` to a registry image containing the current Simulator build and configure fixed capacity with
+`simulator.loadgenerators.count`. Each run uses one ephemeral coordinator Pod and a ConfigMap lock. Inputs and results
+move through `kubectl`; Kubernetes plans do not use SSH load generators.
+
+For Kubernetes tests, Hazelcast members are managed by the Kubernetes operator, not by simulator workers. Set
+`node_count: 0`, keep `node_hosts: loadgenerators`, and set `member_hosts: hazelcast` in `tests.yaml`. The separate
+`member_hosts` pattern supplies client addresses without registering the Kubernetes service as an SSH agent.
+
+Multi-DC plans require positive member counts whose total matches `hazelcast.cluster_size`. Physical-topology plans use
+a unique `topology_value` for every DC. Synthetic logical-region plans can use unequal counts with
+`dcs[].pod_ordinals`; the installer derives each current pod's logical DC from its StatefulSet ordinal and verifies the
+live distribution.
+ClusterIP is the default. LoadBalancer, NodePort, and explicit endpoint overrides remain available for
+intentional external access.
+
+ChaosMesh can be enabled with:
+
+   ```yaml
+   chaosmesh:
+       enabled: true
+       install: false
+   ```
+
+When enabled, `inventory control kill-members` and `inventory control split-brain` render ChaosMesh experiments.
+Positive kill lapses use `pod-failure` to keep current pods unavailable for the requested interval. Without ChaosMesh,
+`kill-members` falls back to deleting selected pods and waiting for replacements. Chaos resources are removed in
+cleanup paths even when a command is interrupted.
+
+Those controls are reserved built-in profiles and work without custom profile configuration. Optional
+`chaosmesh.profiles` add inventory-targeted latency, jitter, loss, bandwidth, stress, raw Chaos Mesh resources,
+Workflows, and Schedules. Use `inventory control chaos-render`, `chaos-run`, `chaos-status`, and `chaos-stop`.
+
+See [examples/k8s](examples/k8s) and
+[templates/hazelcast5-k8s-chaosmesh](templates/hazelcast5-k8s-chaosmesh) for provider fragments and a full template.
+
 ## Installing and operating observability
 
-AWS templates can optionally provision a separate `observability` instance that runs Prometheus and Grafana. Prometheus
-scrapes the Management Center `/metrics` endpoint, so the `mc` group must also be provisioned.
+AWS templates can optionally provision a separate `observability` instance that runs Prometheus and Grafana. Kubernetes
+templates deploy Prometheus and Grafana into the target namespace when `observability.enabled: true`. In both cases,
+Prometheus scrapes the Management Center `/metrics` endpoint, so Management Center must be enabled.
 
 Enable both groups in `inventory_plan.yaml`:
 
@@ -377,90 +471,17 @@ To run the benchmark
 
 ## Docker Usage Examples
 
-Here's a complete workflow using the Docker image to run performance tests on AWS:
+Complete the shared [example initialization guide](examples/README_INIT.md)
+before running a tutorial. It installs `docker-sim` from the selected image,
+creates an external `simulator-workspace/projects` directory, and validates the
+shared `~/.m2` mount.
 
-### 1. Create a New Benchmark Project
-#### Create project with Hazelcast 5 template for EC2
-```bash
-docker run --rm -it -v "$(pwd):/workspace" hazelcast/simulator:latest perftest create --template hazelcast5-ec2 test
-```
-
-### 2. Apply Infrastructure
-#### Provision AWS infrastructure (requires AWS credentials)
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  -v ~/.aws:/root/.aws:ro \
-  hazelcast/simulator:latest inventory apply
-```
-
-### 3. Install Java on Remote Machines
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  hazelcast/simulator:latest inventory install java
-```
-
-### 4. Install Simulator on Remote Machines
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  -v ~/.aws:/root/.aws:ro \
-  hazelcast/simulator:latest inventory install simulator
-```
-
-### 5. Run Performance Tests
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  hazelcast/simulator:latest perftest run
-```
-
-### 6. Clean Up Infrastructure
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  -v ~/.aws:/root/.aws:ro \
-  hazelcast/simulator:latest inventory destroy
-```
-
-Here's a complete workflow using the Docker image to run performance tests on existing/running Hazelcast Cluster:
-
-### 1. Create a New Benchmark Project
-#### Create project with Hazelcast 5 existing cluster template
-```bash
-docker run --rm -it -v "$(pwd):/workspace" hazelcast/simulator:latest perftest create --template hazelcast5-existing-cluster test
-```
-
-### 2. Modify the Environment
-Edit the `inventory.yaml` file to specify your loadgenerator setup:
-- IP addresses and SSH users for `loadgenerators`
-
-Edit the `client-hazelcast.xml` file to to point to your Hazelcast cluster::
-- Under the <cluster-members> section, list the IP addresses and ports of your Hazelcast member nodes.
-- Update the <cluster-name> element to match the name of your Hazelcast cluster
-
-### 3. Install Java on Load Generator Machines
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  hazelcast/simulator:latest inventory install java
-```
-
-### 4. Install Simulator on Load Generator Machines
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  -v ~/.aws:/root/.aws:ro \
-  hazelcast/simulator:latest inventory install simulator
-```
-
-### 5. Run Performance Tests
-```bash
-docker run --rm -it \
-  -v "$(pwd)/test:/workspace" \
-  hazelcast/simulator:latest perftest run
-```
+For an AWS managed environment, continue with the
+[multi-DC tutorial](examples/multi-dc/README_TEST.md). It includes AWS login,
+access checks, image-backed project initialization, verification, and teardown.
+For Kubernetes or an existing Kubernetes cluster, use the
+[Kubernetes tutorial](examples/k8s/README.md), which provides the corresponding
+GKE login, cluster-access, and cleanup workflow.
 
 ## What's next
 
@@ -1660,7 +1681,8 @@ inventory control diagnostics-off --cluster workers
 ```
 
 The commands use the Management Center diagnostics configuration REST API and default to the `mc` inventory group on
-port `8080`. The API requires Enterprise Management Center licensing and a configured cluster connection. The
+port `8080`. For Kubernetes inventories, simulator resolves the Management Center service from the active
+cluster and calls the same API. The API requires Enterprise Management Center licensing and a configured cluster connection. The
 `diagnostics-on` command does not control the log directory; that has to be preconfigured at member startup, which the
 default worker script now does.
 

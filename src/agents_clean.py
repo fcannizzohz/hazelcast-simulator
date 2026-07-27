@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
 from simulator.log import info
-from simulator.ssh import Ssh
 from simulator.util import run_parallel
-from simulator.hosts import public_ip, ssh_user, ssh_options
+from simulator.hosts import public_ip
+from simulator.remote import remote_exec
 
 def _agent_clear(agent):
     info(f"     {public_ip(agent)} Clearing agent")
-    ssh = Ssh(public_ip(agent), ssh_user(agent), ssh_options(agent))
-    ssh.exec(f"rm -fr hazelcast-simulator/workers/*")
+    home = "/opt/simulator" if agent.get("provider") == "kubernetes" else "hazelcast-simulator"
+    remote_exec(agent, f"rm -fr {home}/workers/*")
 
 
 def agents_clean(agents):

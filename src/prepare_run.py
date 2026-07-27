@@ -9,6 +9,8 @@ from simulator.util import run_parallel
 
 
 def prepare_run_dir(agent):
+    if agent.get("provider") == "kubernetes":
+        return
     ssh = Ssh(public_ip(agent), ssh_user(agent), ssh_options(agent))
     ssh.exec(f"""
         rm -fr {target_dir}
@@ -17,11 +19,15 @@ def prepare_run_dir(agent):
 
 
 def upload(agent):
+    if agent.get("provider") == "kubernetes":
+        return
     ssh = Ssh(public_ip(agent), ssh_user(agent), ssh_options(agent))
     ssh.scp_to_remote(upload_dir, target_dir)
 
 
 def start_dstat(agent):
+    if agent.get("provider") == "kubernetes":
+        return
     ssh = Ssh(public_ip(agent), ssh_user(agent), ssh_options(agent))
     ssh.exec(f"""
             set -e
@@ -42,4 +48,3 @@ if os.path.exists(upload_dir):
     run_parallel(upload, [(agent,) for agent in agents_yaml])
 
 run_parallel(start_dstat, [(agent,) for agent in agents_yaml])
-

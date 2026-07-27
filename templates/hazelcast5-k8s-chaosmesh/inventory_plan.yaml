@@ -1,0 +1,40 @@
+# Start here for an existing Kubernetes cluster. All Simulator workloads run
+# in this namespace. Set kubernetes.context only when it is not your current
+# kubectl context.
+provisioner: kubernetes
+
+kubernetes:
+    provider: existing
+    instance: simulator-k8s
+    namespace: simulator
+    context: null
+
+# The Operator is installed in its own namespace by default. Set install: false
+# only when an administrator already manages a compatible Operator.
+operator:
+    install: true
+
+hazelcast:
+    cluster_size: 3
+    version: 5.7.0
+
+# One group means all members are in the same logical DC. See the README before
+# adding physical topology values or synthetic pod ordinals.
+dcs:
+    - name: dc-a
+      members: 3
+
+# Set this to an image that every Kubernetes node can pull. It runs both the
+# coordinator and load-generator Pods.
+simulator:
+    image: registry.example.com/hazelcast-simulator:latest
+    loadgenerators:
+        count: 1
+
+# Optional features stay off until explicitly needed.
+mc:
+    enabled: false
+observability:
+    enabled: false
+chaosmesh:
+    enabled: false

@@ -1,0 +1,133 @@
+#!/bin/bash
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  gke_inventory_values --project PROJECT [--machine-types] LOCATION [LOCATION...]
+
+Print Google Cloud values used by a GKE Simulator inventory_plan.yaml. A
+LOCATION can be a region (for example europe-west1) or a zone (for example
+europe-west1-b).
+
+Examples:
+  gke_inventory_values --project my-project europe-west1 us-central1
+  gke_inventory_values --project my-project --machine-types europe-west1
+EOF
+}
+
+project=""
+machine_types=false
+locations=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --project)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --project requires a value" >&2
+                exit 1
+            fi
+            project="$2"
+            shift 2
+            ;;
+        --machine-types)
+            machine_types=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while [[ $# -gt 0 ]]; do
+                locations+=("$1")
+                shift
+            done
+            ;;
+        -*)
+            echo "ERROR: unknown option [$1]" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            locations+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$project" ]]; then
+    echo "ERROR: --project is required" >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ ${#locations[@]} -eq 0 ]]; then
+    echo "ERROR: at least one region or zone is required" >&2
+    usage >&2
+    exit 1
+fi
+
+if ! command -v gcloud >/dev/null 2>&1; then
+    echo "ERROR: gcloud CLI is not installed or not on PATH" >&2
+    exit 1
+fi
+
+gcloud projects describe "$project" --format='value(projectId)' >/dev/null
+
+for location in "${locations[@]}"; do
+    echo
+    echo "project_id: ${project}"
+
+    if gcloud compute regions describe "$location" \
+        --project "$project" --format='value(name)' >/dev/null 2>&1; then
+        region="$location"
+        echo "region: ${region}"
+        echo "node_locations:"
+        while IFS= read -r zone; do
+            [[ -n "$zone" ]] && echo "    - ${zone}"
+        done < <(gcloud compute zones list \
+            --project "$project" \
+            --filter="region=(${region}) AND status=UP" \
+            --sort-by=name \
+            --format='value(name)')
+    elif gcloud compute zones describe "$location" \
+        --project "$project" --format='value(name)' >/dev/null 2>&1; then
+        region=$(gcloud compute zones describe "$location" \
+            --project "$project" --format='value(region.basename())')
+        echo "zone: ${location}"
+        echo "# region: ${region}"
+    else
+        echo "ERROR: [$location] is not an accessible Google Cloud region or zone in project [$project]" >&2
+        exit 1
+    fi
+
+    echo "candidate network and subnetwork values:"
+    gcloud compute networks subnets list \
+        --project "$project" \
+        --filter="region=(${region})" \
+        --sort-by=network,name \
+        --format='table(name,network.basename():label=NETWORK,region.basename():label=REGION,ipCidrRange:label=IP_RANGE,stackType:label=STACK)'
+
+    if [[ "$machine_types" == true ]]; then
+        if [[ "$location" == "$region" ]]; then
+            machine_zone=$(gcloud compute zones list \
+                --project "$project" \
+                --filter="region=(${region}) AND status=UP" \
+                --sort-by=name \
+                --limit=1 \
+                --format='value(name)')
+        else
+            machine_zone="$location"
+        fi
+        echo "candidate node_machine_type values (zone ${machine_zone}):"
+        gcloud compute machine-types list \
+            --project "$project" \
+            --zones "$machine_zone" \
+            --sort-by=guestCpus,memoryMb,name \
+            --format='table(name,guestCpus:label=VCPUS,memoryMb:label=MEMORY_MB)' \
+            --limit=50
+    fi
+done

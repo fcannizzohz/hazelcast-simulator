@@ -1,0 +1,39 @@
+region-a-region-b-delay:
+    kind: NetworkChaos
+    targets: region-a
+    target: {targets: region-b, mode: all}
+    mode: all
+    duration: 10m
+    scope: workload
+    spec: {action: delay, direction: both, delay: {latency: 100ms, jitter: 20ms, correlation: "25"}}
+region-a-region-c-delay:
+    kind: NetworkChaos
+    targets: region-a
+    target: {targets: region-c, mode: all}
+    mode: all
+    duration: 10m
+    scope: workload
+    spec: {action: delay, direction: both, delay: {latency: 150ms, jitter: 30ms, correlation: "25"}}
+region-b-region-c-delay:
+    kind: NetworkChaos
+    targets: region-b
+    target: {targets: region-c, mode: all}
+    mode: all
+    duration: 10m
+    scope: workload
+    spec: {action: delay, direction: both, delay: {latency: 150ms, jitter: 30ms, correlation: "25"}}
+region-c-pod-failure:
+    kind: PodChaos
+    targets: region-c
+    mode: all
+    duration: 90s
+    scope: workload
+    spec: {action: pod-failure}
+region-c-network-isolation:
+    kind: NetworkChaos
+    targets: region-c
+    target: {targets: region-a,region-b, mode: all}
+    mode: all
+    duration: 90s
+    scope: workload
+    spec: {action: partition, direction: both}

@@ -1,0 +1,29 @@
+hazelcast:
+    cp-subsystem:
+        cp-member-count: 5
+        group-size: 5
+        persistence-enabled: true
+        session-time-to-live-seconds: 60
+        session-heartbeat-interval-seconds: 5
+        missing-cp-member-auto-removal-seconds: 300
+        fail-on-indeterminate-operation-state: false
+        data-load-timeout-seconds: 300
+        maps:
+            map0@cpgroup-0: {max-size-mb: 256}
+            map1@cpgroup-1: {max-size-mb: 256}
+            map2@cpgroup-2: {max-size-mb: 256}
+            map3@cpgroup-3: {max-size-mb: 256}
+            map4@cpgroup-4: {max-size-mb: 256}
+        raft-algorithm:
+            leader-election-timeout-in-millis: 8000
+            leader-heartbeat-period-in-millis: 1000
+            max-missed-leader-heartbeat-count: 10
+    map:
+        default: {backup-count: 1, async-backup-count: 0}
+        ap-map: {backup-count: 1, async-backup-count: 0}
+    metrics:
+        enabled: true
+        management-center: {enabled: true, retention-seconds: 60}
+    properties:
+        hazelcast.logging.type: log4j2
+        hazelcast.phone.home.enabled: false

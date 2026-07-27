@@ -1,0 +1,24 @@
+# Enable this file by setting chaosmesh.enabled: true and
+# chaosmesh.profiles_file: chaos/profiles.yaml in inventory_plan.yaml.
+# For a dedicated test cluster, also set chaosmesh.install: true. On a shared
+# cluster, leave install false and use an administrator-managed Chaos Mesh.
+same-dc-latency:
+    kind: NetworkChaos
+    targets: nodes
+    target:
+        targets: nodes
+        mode: all
+    mode: all
+    duration: 2m
+    scope: workload
+    spec:
+        action: delay
+        direction: both
+        delay:
+            latency: 20ms
+            jitter: 5ms
+            correlation: "25"
+
+rolling-failures:
+    manifest: chaos/rolling-failures.yaml
+    scope: workload

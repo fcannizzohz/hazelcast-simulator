@@ -27,6 +27,13 @@ def find_driver_config_file(driver, filename):
 
 def _upload_driver(host, driver_dir):
     info(f"     {host['public_ip']}  Uploading")
+    if host.get("provider") == "kubernetes":
+        from simulator.remote import copy_to_remote, remote_exec
+        destination = f"/opt/simulator/{driver_dir}"
+        remote_exec(host, f"mkdir -p {destination}")
+        copy_to_remote(host, f"{simulator_home}/{driver_dir}/.", destination)
+        info(f"     {host['public_ip']}  Uploading: done")
+        return
     shell(
         f"""rsync --checksum -avv -L -e "ssh {host['ssh_options']}" \
             {simulator_home}/{driver_dir}/* \

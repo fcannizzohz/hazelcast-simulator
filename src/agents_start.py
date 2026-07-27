@@ -10,6 +10,9 @@ from simulator.ssh import Ssh
 
 
 def __start_agent(agent):
+    if agent.get("provider") == "kubernetes":
+        info(f"     {public_ip(agent)} already managed by Kubernetes")
+        return
     info(f"     {public_ip(agent)} starting")
     ssh = Ssh(public_ip(agent), ssh_user(agent), ssh_options(agent))
     agent_start = "hazelcast-simulator/bin/hidden/agent_start"

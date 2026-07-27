@@ -150,7 +150,7 @@ class PerfTest:
 
     def run_single_test(self, test):
         self._sanitize_test(test)
-        self.clean()
+        self.clean(test)
         run_path = test.get('run_path')
         if run_path is None:
             name = test['name']
@@ -169,8 +169,10 @@ class PerfTest:
             if not key == 'test':
                 coordinator_params[key] = value
         # Add member user to worker parameters
-        hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!observability:!load_balancers")
-        if hosts:
+        agent_pattern = self._agent_host_pattern(test)
+        hosts = load_hosts(inventory_path=inventory_path, host_pattern=agent_pattern)
+        kubernetes_plan = self._kubernetes_inventory_plan()
+        if hosts and kubernetes_plan is None:
             user = ssh_user(hosts[0])
             coordinator_params['members_user'] = user
 
@@ -208,9 +210,16 @@ class PerfTest:
             for key, value in coordinator_params.items():
                 coordinator_param = f"{coordinator_param} --param {key}={shlex.quote(str(value))}"
 
-            self.exitcode = self.__shell(f"{simulator_home}/bin/hidden/coordinator {coordinator_param} {tmp.name}")
+            if kubernetes_plan is not None:
+                from simulator.inventory_kubernetes import prepare_kubernetes_agents, run_kubernetes_coordinator
+                prepare_kubernetes_agents(kubernetes_plan, hosts, test['RUN_ID'])
+                self.exitcode = run_kubernetes_coordinator(
+                    kubernetes_plan, coordinator_params, tmp.name, run_path, test['RUN_ID']
+                )
+            else:
+                self.exitcode = self.__shell(f"{simulator_home}/bin/hidden/coordinator {coordinator_param} {tmp.name}")
             del test['run_path']
-            hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!observability:!load_balancers")
+            hosts = load_hosts(inventory_path=inventory_path, host_pattern=agent_pattern)
             agents_download(hosts, run_path, test['RUN_ID'])
             agents_clean(hosts)
 
@@ -274,13 +283,16 @@ class PerfTest:
         if not node_hosts:
             node_hosts = "all|!mc:!observability:!load_balancers"
             test['node_hosts'] = node_hosts
-        self.verify_hosts(node_hosts)
+        kubernetes_plan = self._kubernetes_inventory_plan()
+        if test.get("node_count") != 0 and kubernetes_plan is None:
+            self.verify_hosts(node_hosts)
 
         loadgenerator_hosts = test.get('loadgenerator_hosts')
         if not loadgenerator_hosts:
             loadgenerator_hosts = "all|!mc:!observability:!load_balancers"
             test['loadgenerator_hosts'] = loadgenerator_hosts
-        self.verify_hosts(loadgenerator_hosts)
+        if kubernetes_plan is None:
+            self.verify_hosts(loadgenerator_hosts)
 
         loadbalancer_count = test.get('loadbalancer_count')
         if loadbalancer_count is None:
@@ -306,9 +318,23 @@ class PerfTest:
         if test.get("verify_enabled") is None:
             test['verify_enabled'] = True
 
-    def clean(self):
-        # the !mc pattern is very ugly
-        hosts = load_hosts(inventory_path=inventory_path, host_pattern="all:!mc:!observability:!load_balancers")
+    def _agent_host_pattern(self, test=None):
+        if test is not None and test.get("node_count") == 0:
+            return test.get("loadgenerator_hosts", "loadgenerators")
+        if path.exists("inventory_plan.yaml"):
+            inventory_plan = load_yaml_file("inventory_plan.yaml")
+            if inventory_plan.get("provisioner") == "kubernetes":
+                return (test or {}).get("loadgenerator_hosts", "simulator_agents")
+        return "all:!mc:!observability:!load_balancers"
+
+    def _kubernetes_inventory_plan(self):
+        if not path.exists("inventory_plan.yaml"):
+            return None
+        inventory_plan = load_yaml_file("inventory_plan.yaml")
+        return inventory_plan if inventory_plan.get("provisioner") == "kubernetes" else None
+
+    def clean(self, test=None):
+        hosts = load_hosts(inventory_path=inventory_path, host_pattern=self._agent_host_pattern(test))
         agents_clean(hosts)
 
     def __shell(self, cmd):

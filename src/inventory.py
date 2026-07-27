@@ -39,20 +39,27 @@ def load_hosts(inventory_path=None, host_pattern:str="all"):
 
     inventory_yaml = yaml.safe_load(out)
     result = []
+    seen_hosts = set()
     children = inventory_yaml['all']['children']
     for group_name, group in children.items():
         hosts = group.get('hosts')
         if hosts:
             for hostname, host in hosts.items():
-                if not hostname in desired_hosts:
+                if hostname not in desired_hosts or hostname in seen_hosts:
                     continue
 
                 new_host = {}
                 result.append(new_host)
+                seen_hosts.add(hostname)
                 new_host['public_ip'] = hostname
                 new_host['private_ip'] = host.get('private_ip')
+                if host.get('port') is not None:
+                    new_host['port'] = host['port']
                 new_host['ssh_user'] = host.get('ansible_user')
                 new_host['groupname'] = group_name
+                for key in ('provider', 'pod', 'namespace', 'context', 'dc', 'node'):
+                    if host.get(key) is not None:
+                        new_host[key] = host[key]
                 private_key = host.get("ansible_ssh_private_key_file")
                 if private_key:
                     new_host['ssh_options'] = f"-i {private_key} -o StrictHostKeyChecking=no -o ConnectTimeout=60"

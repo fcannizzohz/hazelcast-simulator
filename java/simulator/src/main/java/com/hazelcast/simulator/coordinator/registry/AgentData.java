@@ -217,6 +217,7 @@ public class AgentData {
             agent.put("agent_index", ""+agentData.addressIndex);
             // TODO: Hack
             agent.put("agent_port", "9000");
+            agent.putAll(agentData.tags);
             agents.add(agent);
         }
 

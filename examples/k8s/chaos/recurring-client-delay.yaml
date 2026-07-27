@@ -1,0 +1,22 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: recurring-client-delay
+spec:
+  schedule: "@every 10m"
+  type: NetworkChaos
+  historyLimit: 2
+  concurrencyPolicy: Forbid
+  networkChaos:
+    action: delay
+    mode: all
+    selector:
+      namespaces: ["${WORKLOAD_NAMESPACE}"]
+      labelSelectors:
+        simulator.hazelcast.com/instance: "${SIMULATOR_INSTANCE}"
+        simulator.hazelcast.com/role: loadgenerator
+    delay:
+      latency: 100ms
+      jitter: 20ms
+      correlation: "25"
+    duration: 2m

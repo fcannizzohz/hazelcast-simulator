@@ -1,0 +1,128 @@
+provisioner: kubernetes
+
+kubernetes:
+    provider: gke
+    instance: simulator-single-zone-ap-cp
+    namespace: simulator
+    context: null
+    service_type: ClusterIP
+    manage_namespace: true
+    delete_namespace_on_destroy: false
+    wait_timeout_seconds: 900
+
+gke:
+    create_cluster: true
+    delete_existing_cluster: false
+    project_id: <gcp-project>
+    cluster_name: simulator-single-zone-ap-cp
+    zone: europe-west2-a
+    node_count: 5
+    node_machine_type: c2-standard-8
+    network: null
+    subnetwork: null
+
+operator:
+    install: true
+    version: 5.17.0
+    namespace: hz-system
+    release_name: simulator-hazelcast-operator
+    helm_set: []
+
+hazelcast:
+    name: workers
+    cluster_name: workers
+    cluster_size: 5
+    cp_enabled: true
+    repository: docker.io/hazelcast/hazelcast-enterprise
+    version: 5.7.0
+    license_secret_name: hazelcast-license
+    existing_license_secret: null
+    license_file: null
+    external:
+        enabled: false
+        type: Smart
+        discovery_service_type: LoadBalancer
+        member_access: LoadBalancer
+    resources:
+        requests:
+            cpu: "2"
+            memory: 8Gi
+    scheduling:
+        podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                      matchLabels:
+                          app.kubernetes.io/instance: workers
+                  topologyKey: kubernetes.io/hostname
+    pdb:
+        enabled: true
+        max_unavailable: 1
+    persistence:
+        enabled: true
+        storage_class_name: standard
+        request_storage: 20Gi
+        access_modes:
+            - ReadWriteOnce
+        cluster_data_recovery_policy: PartialRecoveryMostComplete
+    custom_config:
+        file: hazelcast.yaml
+
+# Synthetic logical regions. All five pods run in the same GKE zone; the
+# StatefulSet ordinal is the stable logical-region identity used by controls.
+dcs:
+    - name: region-a
+      members: 2
+      pod_ordinals: [0, 1]
+    - name: region-b
+      members: 2
+      pod_ordinals: [2, 3]
+    - name: region-c
+      members: 1
+      pod_ordinals: [4]
+
+mc:
+    enabled: true
+    name: management-center
+    repository: docker.io/hazelcast/management-center
+    version: 5.11.0
+    persistence_size: 4Gi
+    resources:
+        requests:
+            cpu: "1"
+            memory: 2Gi
+
+observability:
+    enabled: true
+
+chaosmesh:
+    enabled: true
+    install: true
+    version: 2.8.3
+    namespace: chaos-mesh
+    release_name: chaos-mesh
+    runtime: containerd
+    socket_path: /run/containerd/containerd.sock
+    helm_set: []
+    default_duration: 90s
+    allow_elevated_scope: false
+    profiles_file: chaos/profiles.yaml
+
+simulator:
+    image: registry.example.com/hazelcast-simulator:latest
+    image_pull_policy: IfNotPresent
+    image_pull_secrets: []
+    coordinator:
+        active_deadline_seconds: 86400
+        retain_on_failure: false
+        resources:
+            requests:
+                cpu: "1"
+                memory: 2Gi
+    loadgenerators:
+        count: 2
+        reset_before_run: true
+        resources:
+            requests:
+                cpu: "2"
+                memory: 4Gi
+        scheduling: {}

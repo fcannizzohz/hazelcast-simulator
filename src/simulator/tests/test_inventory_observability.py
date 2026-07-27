@@ -8,6 +8,16 @@ import inventory_cli
 
 class TestInventoryObservability(unittest.TestCase):
 
+    @patch.object(inventory_cli.path, "exists", return_value=True)
+    @patch.object(inventory_cli, "load_yaml_file", return_value={"provisioner": "kubernetes"})
+    def test_default_ssh_hosts_uses_simulator_agents_for_kubernetes(self, _load_plan, _exists):
+        self.assertEqual("simulator_agents", inventory_cli.default_ssh_hosts("all"))
+
+    @patch.object(inventory_cli.path, "exists", return_value=True)
+    @patch.object(inventory_cli, "load_yaml_file", return_value={"provisioner": "terraform"})
+    def test_default_ssh_hosts_preserves_existing_provider_default(self, _load_plan, _exists):
+        self.assertEqual("all:!mc", inventory_cli.default_ssh_hosts("all:!mc"))
+
     def test_ansible_extra_vars_quotes_shell_command_as_json(self):
         command = 'ps -ef | grep -E "[h]azelcast-management-center|[h]z-mc"; tail -80 ~/mc.out'
         quoted = inventory_cli.ansible_extra_vars(cmd=command)

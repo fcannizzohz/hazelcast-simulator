@@ -1,0 +1,25 @@
+# A short verified smoke test. Start here before increasing duration, clients,
+# thread count, or value size for a benchmark.
+- name: k8s-smoke
+  duration: 60s
+  repetitions: 1
+  loadgenerator_count: 1
+  node_count: 0
+  driver: hazelcast5
+  version: maven=5.7.0
+  client_hazelcast_xml: client-hazelcast.xml
+  loadgenerator_hosts: loadgenerators
+  member_hosts: hazelcast
+  verify_enabled: true
+  warmup_seconds: 10
+  cooldown_seconds: 5
+  test:
+      class: com.hazelcast.simulator.tests.map.StringStringMapTest
+      threadCount: 2
+      getProb: 0.8
+      putProb: 0.2
+      keyCount: 100
+      keyLength: 16
+      minValueLength: 32
+      maxValueLength: 32
+      ratePerSecond: 10
