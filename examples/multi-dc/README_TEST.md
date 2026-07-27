@@ -6,6 +6,12 @@ Before continuing, complete the shared [workspace initialization guide](../READM
 It installs the image-supplied `docker-sim` command, validates the `~/.m2`
 mount, and creates `$SIMULATOR_WORKSPACE/projects` outside the checkout.
 
+This runbook contains only the commands needed to configure and run the AWS
+scenarios. Read [AWS multi-DC](../../docs/aws-multi-dc.md) for the deployment
+model, [controls and chaos](../../docs/cluster-controls-and-chaos.md) before
+injecting failures, and [observability](../../docs/observability.md) before
+exporting metrics.
+
 ## Scope
 
 This runbook covers six manual scenarios:
@@ -37,12 +43,8 @@ export PROJECT="$SIMULATOR_WORKSPACE/projects/<project>"
 docker-sim python3 -c 'from pathlib import Path; import os; p = Path("tests.yaml"); p.write_text(p.read_text().replace("<add key here>", os.environ["HZ_LICENSEKEY"]))'
 ```
 
-`docker-sim` forwards `HZ_LICENSEKEY` into the Simulator container when it
-is set. During `inventory install observability`, the same value is applied to
-Management Center through `MC_LICENSE` and `-Dhazelcast.mc.license` before MC is
-restarted. The value is not passed on the local Ansible command line, but the
-Java system property can be visible in the MC JVM process arguments on the
-remote host while MC is running.
+`docker-sim` forwards `HZ_LICENSEKEY` into the Simulator container. Do not
+write the key into the project or commit it to version control.
 
 Before provisioning a managed AWS runbook, sign in through the image and verify
 the credentials that `docker-sim` persists in the standard host AWS directory:
@@ -92,41 +94,20 @@ docker-sim inventory shell --ping --hosts all
 docker-sim inventory control probe --hosts nodes
 ```
 
-Managed runbooks provision Hazelcast members, one load generator, one Management
-Center host, and one observability host with Grafana on port `3000` and
-Prometheus on port `9090`. `inventory install observability` preconfigures MC to
-connect to the `nodes` group as cluster `workers`, restarts MC, then starts
-Prometheus and Grafana. It also sets `MC_HOME=~/hazelcast-mc` for both `hz-mc
-conf` and the restarted MC process, and removes a stale
-`~/hazelcast-mc/mc.lock` before running `hz-mc conf`, so rerunning the installer
-can update MC after an earlier MC process was stopped. The observability
-installer requires the `mc` group. If the plan has `mc.count: 0` or no `mc`
-group in `inventory.yaml`, `inventory install observability` should fail with a
-clear message instead of producing a partial install.
-
-If you change the cluster name or member port, pass the matching values:
+If the plan changes the cluster name or member port, pass the matching values:
 
 ```bash
 docker-sim inventory install observability --member-hosts nodes --member-port 5701 --cluster-name workers
 ```
 
-At the end of a successful observability install, the command prints the MC,
-Grafana, and Prometheus URLs. You can print them again from `inventory.yaml`:
+The installer prints the Management Center, Grafana, and Prometheus URLs. To
+print them again from `inventory.yaml`:
 
 ```bash
 docker-sim python3 -c 'import yaml; inv=yaml.safe_load(open("inventory.yaml")); mc=next(iter(inv["mc"]["hosts"])); obs=next(iter(inv["observability"]["hosts"])); print(f"MC: http://{mc}:8080"); print(f"Grafana: http://{obs}:3000"); print(f"Prometheus: http://{obs}:9090")'
 ```
 
-**Important**: MC is preconfigured during install, but it only connects while the
-Hazelcast members are actually running. If you only did inventory apply/install
-but have not started a test yet, the cluster may not exist yet.
-
-Once the cluster is running, optional control commands can inspect or change live
-members. Diagnostics commands use the MC diagnostics configuration REST API, so
-Enterprise MC licensing and a configured cluster connection are required. The
-member worker script preconfigures diagnostics output under each worker
-directory, so any diagnostics files generated during the run are downloaded with
-the normal run artifacts under each worker's `diagnostics/` directory:
+Once the cluster is running, optional diagnostics commands are available:
 
 ```bash
 docker-sim inventory control diagnostics-status --cluster workers
@@ -134,8 +115,7 @@ docker-sim inventory control diagnostics-on --cluster workers --auto-off-minutes
 docker-sim inventory control diagnostics-off --cluster workers
 ```
 
-Use the observability host commands when you need to check the Prometheus and
-Grafana containers directly:
+To check the observability host directly:
 
 ```bash
 docker-sim inventory shell --hosts observability "cd ~/hazelcast-observability && (sudo docker compose ps || sudo docker-compose ps)"

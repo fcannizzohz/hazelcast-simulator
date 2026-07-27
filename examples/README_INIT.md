@@ -14,12 +14,10 @@ docker version
 docker info >/dev/null
 ```
 
-Install the AWS CLI for AWS examples, and `gcloud`, `kubectl`, Helm, and
-`gke-gcloud-auth-plugin` for GKE examples. The tutorials deliberately invoke
-their image-resident counterparts through `docker-sim`, keeping Simulator
-operations reproducible; the local clients remain available for credential
-recovery and administrator workflows. Cloud credentials and kubeconfig state
-are persisted in the standard host directories by the image-backed commands.
+The selected image supplies the AWS CLI, `gcloud`, `kubectl`, Helm, and
+`gke-gcloud-auth-plugin`; run those tools through `docker-sim` in the provider
+tutorial. Cloud credentials and kubeconfig state are persisted in their
+standard host directories by the image-backed commands.
 
 ## 2. Select the Simulator image
 
@@ -112,7 +110,6 @@ the same terminal open so `SIM_IMAGE`, `SIMULATOR_WORKSPACE`, `PATH`, and
 requests it; do not commit that value to project files.
 
 ## 6. Cleanup rule
-export SIMULATOR_WORKSPACE="${SIMULATOR_WORKSPACE:-$HOME/simulator-workspace}"
 
 Every tutorial ends with `docker-sim inventory destroy`. Run it even after a
 failed test when the tutorial created cloud resources, then use the provider

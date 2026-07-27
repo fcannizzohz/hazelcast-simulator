@@ -5,6 +5,11 @@ the Simulator coordinator, and every load generator inside Kubernetes. The
 Simulator control plane runs from the selected Docker image and transfers run
 inputs and results with `kubectl`.
 
+This is an operational procedure. For the supported deployment model,
+ownership rules, and feature constraints, see
+[Kubernetes and GKE](../../docs/kubernetes-gke.md) and
+[cluster controls and chaos](../../docs/cluster-controls-and-chaos.md).
+
 Before following any Kubernetes scenario, complete the shared
 [workspace initialization guide](../README_INIT.md). It creates the external
 `$SIMULATOR_WORKSPACE/projects` directory, verifies the shared `~/.m2` mount,
@@ -77,11 +82,10 @@ docker-sim gcloud auth login --no-launch-browser
 docker-sim gcloud projects list
 ```
 
-Select a project you can use from the `PROJECT_ID` column. For example, the
-existing project `solution-architects-415712` can be selected as follows:
+Select a project you can use from the `PROJECT_ID` column:
 
 ```bash
-export GCP_PROJECT=solution-architects-415712
+export GCP_PROJECT=<project-id>
 docker-sim gcloud config set project "$GCP_PROJECT"
 ```
 
@@ -422,8 +426,8 @@ Run:
 docker-sim perftest run
 ```
 
-The CLI acquires a ConfigMap run lock, creates a coordinator Pod, stages the
-The CLI stages inventory and test files, streams coordinator output, retrieves coordinator and
+The CLI acquires a ConfigMap run lock, creates a coordinator Pod, stages
+inventory and test files, streams coordinator output, retrieves coordinator and
 agent results, and removes the Pod. A failed Pod is retained only when
 `simulator.coordinator.retain_on_failure: true`.
 
@@ -1144,7 +1148,8 @@ respective `*_on_destroy` plan settings.
 
 ## Related Documentation
 
-- [`README.md`](../../README.md): complete Simulator documentation.
-- [`README_CONTROL_SUMMARY.md`](../../README_CONTROL_SUMMARY.md): control behavior.
-- [`observability/README.md`](../../observability/README.md): dashboards and diagnostics.
+- [Operational documentation](../../docs/README.md): shared workspace and cleanup rules.
+- [Kubernetes and GKE](../../docs/kubernetes-gke.md): deployment and ownership model.
+- [Cluster controls and chaos](../../docs/cluster-controls-and-chaos.md): control behavior.
+- [Observability and portable reports](../../docs/observability.md): dashboards and diagnostics.
 - [`templates/hazelcast5-k8s-chaosmesh/README.md`](../../templates/hazelcast5-k8s-chaosmesh/README.md): template reference.
