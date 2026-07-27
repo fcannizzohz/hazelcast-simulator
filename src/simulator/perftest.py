@@ -279,18 +279,27 @@ class PerfTest:
         if loadgenerator_count is None:
             test['loadgenerator_count'] = -1
 
-        node_hosts = test.get('node_hosts', 'all')
-        if not node_hosts:
-            node_hosts = "all|!mc:!observability:!load_balancers"
-            test['node_hosts'] = node_hosts
         kubernetes_plan = self._kubernetes_inventory_plan()
-        if test.get("node_count") != 0 and kubernetes_plan is None:
-            self.verify_hosts(node_hosts)
 
         loadgenerator_hosts = test.get('loadgenerator_hosts')
         if not loadgenerator_hosts:
             loadgenerator_hosts = "all|!mc:!observability:!load_balancers"
             test['loadgenerator_hosts'] = loadgenerator_hosts
+
+        node_hosts = test.get('node_hosts')
+        if kubernetes_plan is not None and test["node_count"] == 0 and not node_hosts:
+            # Kubernetes manages members separately; the coordinator still
+            # requires node_hosts, so use the in-cluster Simulator agents.
+            node_hosts = loadgenerator_hosts
+            test['node_hosts'] = node_hosts
+        elif node_hosts is not None and not node_hosts:
+            node_hosts = "all|!mc:!observability:!load_balancers"
+            test['node_hosts'] = node_hosts
+        elif node_hosts is None:
+            node_hosts = "all"
+
+        if test.get("node_count") != 0 and kubernetes_plan is None:
+            self.verify_hosts(node_hosts)
         if kubernetes_plan is None:
             self.verify_hosts(loadgenerator_hosts)
 
