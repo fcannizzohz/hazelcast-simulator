@@ -90,6 +90,16 @@ COPY lib/ /opt/simulator/lib/
 COPY drivers/ /opt/simulator/drivers/
 COPY user-lib/ /opt/simulator/user-lib/
 
+# The lib/ directory is local build output and can contain an older Simulator
+# core JAR. Rebuild that JAR from the checked-in Java source so the runtime
+# always includes coordinator behavior from this revision (for example,
+# Kubernetes agent metadata handling).
+COPY java/ /tmp/simulator-java/
+RUN cd /tmp/simulator-java && \
+    mvn -pl simulator clean package -DskipTests && \
+    cp simulator/target/simulator-2.0-SNAPSHOT.jar /opt/simulator/lib/simulator-2.0-SNAPSHOT.jar && \
+    rm -rf /tmp/simulator-java
+
 # The checked-in source configuration is authoritative. The local drivers/
 # directory contains generated build output and may predate source changes.
 COPY java/drivers/driver-hazelcast4plus/conf/ /tmp/driver-hazelcast4plus-conf/

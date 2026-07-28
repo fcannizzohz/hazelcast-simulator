@@ -84,10 +84,10 @@ class ColumnDesc:
 
 
 def concat_dataframe_columns(dataframes):
-    if len(dataframes) == 0:
+    dataframes = [dataframe for dataframe in dataframes if dataframe is not None]
+    if not dataframes:
         return None
-    else:
-        return pd.concat(dataframes, axis=1, join='outer')
+    return pd.concat(dataframes, axis=1, join='outer')
 
 
 # Shifts the vales in the time index to the beginning (epoch). This is needed

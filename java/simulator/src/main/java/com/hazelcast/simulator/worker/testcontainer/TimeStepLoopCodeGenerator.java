@@ -78,11 +78,20 @@ class TimeStepLoopCodeGenerator {
         className += "Loop";
 
         if (!"".equals(testCaseId)) {
-            className += testCaseId;
+            className += toJavaIdentifier(testCaseId);
         }
         JavaFileObject file = createJavaFileObject(
                 className, executionGroup, metronomeClass, timeStepModel, probeClass, logFrequency, logRateMs, hasIterationCap);
         return compile(javaCompiler, file, className);
+    }
+
+    static String toJavaIdentifier(String value) {
+        StringBuilder result = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            result.append(Character.isJavaIdentifierPart(character) ? character : '_');
+        }
+        return result.toString();
     }
 
     Class compile(JavaCompiler compiler, JavaFileObject file, final String className) {

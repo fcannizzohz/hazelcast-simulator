@@ -2,6 +2,10 @@ package com.hazelcast.simulator.coordinator.registry;
 
 import org.junit.Test;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
 import static com.hazelcast.simulator.protocol.core.SimulatorAddress.agentAddress;
 import static junit.framework.TestCase.assertTrue;
 import static org.junit.Assert.assertEquals;
@@ -55,6 +59,21 @@ public class AgentDataTest {
         String ipAddresses = agentData.formatIpAddresses();
         assertTrue(ipAddresses.contains("192.168.0.1"));
         assertTrue(ipAddresses.contains("172.16.16.1"));
+    }
+
+    @Test
+    public void testToYaml_preservesKubernetesTags() {
+        Map<String, String> tags = new HashMap<>();
+        tags.put("provider", "kubernetes");
+        tags.put("namespace", "simulator");
+        tags.put("pod", "agent-0");
+        AgentData agentData = new AgentData(1, DEFAULT_PUBLIC_ADDRESS, DEFAULT_PRIVATE_ADDRESS, tags);
+
+        String yaml = AgentData.toYaml(Collections.singletonList(agentData));
+
+        assertTrue(yaml.contains("provider: kubernetes"));
+        assertTrue(yaml.contains("namespace: simulator"));
+        assertTrue(yaml.contains("pod: agent-0"));
     }
 
 }

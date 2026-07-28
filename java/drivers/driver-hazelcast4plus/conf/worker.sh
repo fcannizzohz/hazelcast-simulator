@@ -146,6 +146,11 @@ mount_persistence_volume() {
         DIR_CREATED=true
     fi
 
+    if [[ -z "${members_user:-}" ]]; then
+        log "ERROR" "members_user must be set when Simulator mounts a persistence volume."
+        exit 1
+    fi
+
     log "INFO" "Setting ownership and permissions for '$mount_path'..."
     sudo chown "$members_user:$members_user" "$mount_path" || { log "ERROR" "Failed to change ownership of '$mount_path'"; exit 1; }
     sudo chmod 755 "$mount_path" || { log "ERROR" "Failed to set permissions for '$mount_path'"; exit 1; }
@@ -206,7 +211,7 @@ append_jvm_property_if_missing() {
 }
 
 if [ "${WORKER_TYPE:-}" = "member" ]; then
-    JVM_OPTIONS=$member_args
+    JVM_OPTIONS=${member_args:-}
 
     if [ "${DIAGNOSTICS_PRECONFIGURE:-true}" = "true" ]; then
         DIAGNOSTICS_DIRECTORY="${DIAGNOSTICS_DIRECTORY:-$(pwd -P)/diagnostics}"
@@ -223,7 +228,7 @@ if [ "${WORKER_TYPE:-}" = "member" ]; then
         log "INFO" "Preconfigured Hazelcast diagnostics directory '$DIAGNOSTICS_DIRECTORY' with prefix '$DIAGNOSTICS_FILE_PREFIX'."
     fi
 else
-    JVM_OPTIONS=$client_args
+    JVM_OPTIONS=${client_args:-}
 fi
 
 # Include the member/client-worker jvm options

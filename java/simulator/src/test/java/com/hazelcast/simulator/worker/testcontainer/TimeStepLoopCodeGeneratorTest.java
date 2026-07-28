@@ -4,6 +4,7 @@ import org.junit.Test;
 
 import javax.tools.JavaFileObject;
 
+import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.mock;
 
 public class TimeStepLoopCodeGeneratorTest {
@@ -15,5 +16,10 @@ public class TimeStepLoopCodeGeneratorTest {
         JavaFileObject javaFileObject = mock(JavaFileObject.class);
 
         codeGenerator.compile(null, javaFileObject, "className");
+    }
+
+    @Test
+    public void testToJavaIdentifier_replacesInvalidCharacters() {
+        assertEquals("map_smoke", TimeStepLoopCodeGenerator.toJavaIdentifier("map-smoke"));
     }
 }

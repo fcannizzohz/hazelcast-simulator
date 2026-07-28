@@ -70,6 +70,9 @@ def analyze_run(config: ReportConfig, run_dir, run_label):
         analyze_dstat(run_dir, attributes)
     ])
 
+    if result is None:
+        info(f"No reportable data found for run_path:{run_dir}; skipping report generation.")
+
     info(f"Analyzing run_path:{run_dir}: Done")
     return result
 
