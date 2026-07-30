@@ -14,13 +14,19 @@ def analyze_dstat(run_dir, attributes):
 
     all_dstat_data = []
     for csv_filename in os.listdir(run_dir):
-        if not csv_filename.endswith("_dstat.csv"):
+        if csv_filename.endswith("_dstat.csv"):
+            agent_id = csv_filename[:csv_filename.index("_")]
+        elif csv_filename == "dstat.csv":
+            # Kubernetes runs from older images used one unqualified filename.
+            # Preserve its data when regenerating an existing report.
+            agent_id = "agent"
+        else:
             continue
-        agent_id = csv_filename[:csv_filename.index("_")]
         csv_path = f"{run_dir}/{csv_filename}"
         info(f"\tLoading {csv_path}")
         df = pd.read_csv(csv_path, skiprows=5)
-        multiple_by(df, 1000, "used", "free", "buf", "cach")
+        memory_columns = ("used", "free", "buf", "buff", "cach")
+        multiple_by(df, 1000, *(column for column in memory_columns if column in df.columns))
 
         df['time'] = pd.to_datetime(df['epoch'], unit='s')
         df.set_index('time', inplace=True)

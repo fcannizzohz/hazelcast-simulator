@@ -5,7 +5,7 @@ ARG PYTHON_VERSION=3.11
 ARG TARGETARCH
 
 # Install runtime dependencies with retry mechanism
-RUN apt-get update && apt-get install -y software-properties-common \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y \
         wget \
@@ -28,6 +28,15 @@ RUN apt-get update && apt-get install -y software-properties-common \
         ca-certificates \
         apt-transport-https \
     && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 24.04 maps the dstat package to PCP, whose service-oriented post-install
+# script cannot run in a container build. Install the pinned standalone dstat
+# package instead; it writes the legacy CSV format consumed by Simulator reports.
+RUN curl -fsSLo /tmp/dstat.deb http://archive.ubuntu.com/ubuntu/pool/universe/d/dstat/dstat_0.7.4-6_all.deb \
+    && echo 'f68323abaf8aad48c085d9dd703a321cc2cc02bf16da785dfdc68f9e09985766  /tmp/dstat.deb' | sha256sum -c - \
+    && dpkg -i /tmp/dstat.deb \
+    && sed -i 's/types\.ListType/list/g; s/types\.TupleType/tuple/g; s/types\.StringType/str/g' /usr/bin/dstat \
+    && rm -f /tmp/dstat.deb
 
 # Install Eclipse Temurin JDK 17
 RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /usr/share/keyrings/adoptium-archive-keyring.gpg && \

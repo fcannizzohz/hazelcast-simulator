@@ -1483,6 +1483,7 @@ def _simulator_role_pods(inventory_plan, role):
 
 
 def prepare_kubernetes_agents(inventory_plan, agents, run_id):
+    from simulator.hosts import public_ip
     from simulator.remote import copy_to_remote, remote_exec
 
     upload_dir = path.abspath("upload")
@@ -1491,6 +1492,10 @@ def prepare_kubernetes_agents(inventory_plan, agents, run_id):
     )))
     for agent in agents:
         target = f"/opt/simulator/workers/{run_id}"
+        # Results from every agent are copied into the same local run directory.
+        # Keep the conventional *_dstat.csv suffix that the report loader
+        # discovers, while making the name unique per Kubernetes pod.
+        dstat_name = f"{agent.get('pod') or public_ip(agent)}_dstat.csv"
         command = f"rm -rf {target} && mkdir -p {target}" if reset else f"mkdir -p {target}"
         remote_exec(agent, command)
         if path.isdir(upload_dir):
@@ -1499,7 +1504,7 @@ def prepare_kubernetes_agents(inventory_plan, agents, run_id):
             agent,
             f"if command -v dstat >/dev/null 2>&1; then "
             f"nohup dstat --epoch -m --all -l --noheaders --nocolor "
-            f"--output {target}/dstat.csv 1 >/dev/null 2>&1 & fi",
+            f"--output {target}/{dstat_name} 1 >/dev/null 2>&1 & fi",
         )
 
 

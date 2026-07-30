@@ -16,13 +16,9 @@
 package com.hazelcast.simulator.utils;
 
 import java.io.File;
-import java.util.LinkedList;
-import java.util.Queue;
-
 import static com.hazelcast.simulator.utils.FileUtils.appendText;
 import static com.hazelcast.simulator.utils.FileUtils.fileAsText;
 import static com.hazelcast.simulator.utils.FileUtils.stripExtension;
-import static java.util.Arrays.asList;
 
 @SuppressWarnings("checkstyle:magicnumber")
 public final class ReportCsv {
@@ -49,26 +45,23 @@ public final class ReportCsv {
 
     private static void addPercentiles(File hgrmFile, StringBuffer outSb) {
         String[] lines = fileAsText(hgrmFile).split("\n");
-        Queue<String> importantPercentiles = new LinkedList<>(asList("0.1", "0.2", "0.5", "0.75", "0.90", "0.95",
-                "0.99", "0.999", "0.9999", "1.00"));
-
-        int remaining = importantPercentiles.size();
-        String percentile = importantPercentiles.poll();
+        double[] importantPercentiles = {0.1, 0.2, 0.5, 0.75, 0.90, 0.95, 0.99, 0.999, 0.9999, 1.0};
+        int percentileIndex = 0;
         for (int k = 4; k < lines.length - 3; k++) {
             String line = lines[k].trim();
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
             String[] tokens = line.split("\\s+");
-            String token = tokens[1];
-            if (token.startsWith(percentile)) {
-                remaining--;
+            double percentile = Double.parseDouble(tokens[1]);
+            while (percentileIndex < importantPercentiles.length
+                    && percentile >= importantPercentiles[percentileIndex]) {
                 outSb.append(',').append(tokens[0]);
-                percentile = importantPercentiles.poll();
-                if (percentile == null) {
-                    break;
-                }
+                percentileIndex++;
             }
         }
 
-        for (int k = 0; k < remaining; k++) {
+        for (int k = percentileIndex; k < importantPercentiles.length; k++) {
             outSb.append(',').append(-1);
         }
     }
