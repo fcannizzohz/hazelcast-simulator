@@ -12,6 +12,7 @@ from simulator.inventory_kubernetes import (
     INSTANCE_LABEL,
     OWNER_LABEL,
     _delete_rendered_manifests,
+    _apply_rendered_manifests,
     _gke_apply,
     _gke_destroy,
     _network_chaos_manifest,
@@ -132,12 +133,38 @@ class TestInventoryKubernetes(unittest.TestCase):
         manifests = render_manifests(plan(observability={"enabled": True}))
         hazelcast = next(doc for doc in manifests if doc["kind"] == "Hazelcast")
         provider = next(doc for doc in manifests if doc.get("metadata", {}).get("name") == "grafana-providers")
+        dashboards = next(doc for doc in manifests if doc.get("metadata", {}).get("name") == "grafana-dashboards")
 
         self.assertNotIn("Namespace", [doc["kind"] for doc in manifests])
         self.assertTrue(all(doc["metadata"]["labels"][OWNER_LABEL] == "true" for doc in manifests))
         self.assertTrue(all(doc["metadata"]["labels"][INSTANCE_LABEL] == "test-k8s" for doc in manifests))
         self.assertEqual("ZONE", hazelcast["spec"]["highAvailabilityMode"])
+        self.assertEqual(
+            [{"name": "PROMETHEUS_PORT", "value": "prometheus:9090"}],
+            hazelcast["spec"]["env"],
+        )
         self.assertIn("providers", provider["data"]["dashboard.yaml"])
+        self.assertTrue(any(key.endswith(".json") for key in dashboards["data"]))
+
+    @patch("simulator.inventory_kubernetes.run_kubectl")
+    def test_large_grafana_dashboard_configmap_uses_server_side_apply(self, run_kubectl):
+        with tempfile.TemporaryDirectory() as directory:
+            generated_manifest = os.path.join(directory, "generated.yaml")
+            with open(generated_manifest, "w") as manifest_file:
+                yaml.safe_dump_all([
+                    {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "regular"}},
+                    {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "grafana-dashboards"}},
+                ], manifest_file, sort_keys=False)
+
+            with patch("simulator.inventory_kubernetes.GENERATED_MANIFEST", generated_manifest), \
+                    patch("simulator.inventory_kubernetes.GENERATED_DIR", directory):
+                _apply_rendered_manifests(plan(observability={"enabled": True}))
+
+        commands = [item.args[1] for item in run_kubectl.call_args_list]
+        self.assertEqual(["apply", "-f"], commands[0][:2])
+        self.assertIn("--server-side", commands[1])
+        self.assertIn("--force-conflicts", commands[1])
+        self.assertIn("--field-manager=hazelcast-simulator-grafana", commands[1])
 
     def test_render_manifests_include_in_cluster_simulator_agents(self):
         manifests = render_manifests(plan())

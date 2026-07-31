@@ -5,6 +5,7 @@ import re
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from copy import deepcopy
 from os import path
@@ -709,7 +710,41 @@ def _resource_json(inventory_plan, kind, name, resource_namespace):
 
 
 def _apply_rendered_manifests(inventory_plan):
-    run_kubectl(inventory_plan, ["apply", "-f", GENERATED_MANIFEST])
+    with open(GENERATED_MANIFEST) as manifest_file:
+        manifests = [doc for doc in yaml.safe_load_all(manifest_file) if doc]
+
+    dashboard_manifests = [
+        doc for doc in manifests
+        if doc.get("kind") == "ConfigMap"
+        and (doc.get("metadata") or {}).get("name") == "grafana-dashboards"
+    ]
+    if not dashboard_manifests:
+        run_kubectl(inventory_plan, ["apply", "-f", GENERATED_MANIFEST])
+        return
+
+    regular_manifests = [doc for doc in manifests if doc not in dashboard_manifests]
+    with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", dir=GENERATED_DIR, delete=False
+    ) as regular_file, tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", dir=GENERATED_DIR, delete=False
+    ) as dashboard_file:
+        yaml.safe_dump_all(regular_manifests, regular_file, sort_keys=False)
+        yaml.safe_dump_all(dashboard_manifests, dashboard_file, sort_keys=False)
+        regular_path = regular_file.name
+        dashboard_path = dashboard_file.name
+
+    try:
+        run_kubectl(inventory_plan, ["apply", "-f", regular_path])
+        # The dashboard payload is larger than the client-side apply annotation
+        # limit. Server-side apply stores field ownership without that annotation.
+        run_kubectl(inventory_plan, [
+            "apply", "--server-side", "--force-conflicts",
+            "--field-manager=hazelcast-simulator-grafana",
+            "-f", dashboard_path,
+        ])
+    finally:
+        os.remove(regular_path)
+        os.remove(dashboard_path)
 
 
 def _delete_rendered_manifests(inventory_plan):
@@ -1039,6 +1074,15 @@ def _hazelcast_manifest(inventory_plan):
         "resources": resources or {"requests": {"cpu": "2", "memory": "8Gi"}},
         "properties": hz.get("properties", {}),
     }
+    env = deepcopy(hz.get("env") or [])
+    if observability_enabled(inventory_plan) and not any(
+            item.get("name") == "PROMETHEUS_PORT" for item in env
+    ):
+        # Kubernetes injects PROMETHEUS_PORT as tcp://host:port from the
+        # Prometheus Service. The Hazelcast image expects host:port instead.
+        env.append({"name": "PROMETHEUS_PORT", "value": "prometheus:9090"})
+    if env:
+        spec["env"] = env
     if (hz.get("custom_config") or {}).get("file"):
         spec["customConfigCmName"] = "hazelcast-custom-config"
     if (hz.get("external") or {}).get("enabled", False):
