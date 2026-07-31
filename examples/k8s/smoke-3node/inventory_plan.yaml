@@ -40,10 +40,10 @@ dcs:
       members: 3
 
 mc:
-    enabled: false
+    enabled: true
 
 observability:
-    enabled: false
+    enabled: true
 
 chaosmesh:
     enabled: true

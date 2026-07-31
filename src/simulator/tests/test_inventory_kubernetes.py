@@ -21,6 +21,8 @@ from simulator.inventory_kubernetes import (
     _simulator_runtime_manifests,
     _verify_resource_ownership,
     _verify_license_secret,
+    _verify_observability,
+    _grafana_dashboard_configmap,
     _verify_dc_distribution,
     _wait_for_resource_condition,
     control_kill_members,
@@ -73,6 +75,25 @@ def load_balancer_service(host):
 
 
 class TestInventoryKubernetes(unittest.TestCase):
+
+    @patch("simulator.inventory_kubernetes._observability_http")
+    def test_observability_verification_requires_healthy_management_center_scrape(self, http):
+        http.side_effect = [b"# HELP hazelcast_metric 1\n", {"database": "ok"}, {
+            "data": {"activeTargets": [{"labels": {"job": "hazelcast-mc"}, "health": "up"}]}
+        }]
+        _verify_observability(plan(observability={"enabled": True}))
+        self.assertEqual(3, http.call_count)
+
+    def test_grafana_dashboard_configmap_includes_reportable_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.join(directory, "runs", "smoke", "16-07-2026_08-23-37", "report")
+            os.makedirs(root)
+            with open(os.path.join(root, "report.csv"), "w") as file:
+                file.write("run_label,benchmark,75%(us),95%(us),99%(us),max(us),operations,duration(ms),throughput\n")
+                file.write("16-07-2026_08-23-37,get,1,2,3,4,5,6,7\n")
+            with patch("simulator.inventory_kubernetes.os.getcwd", return_value=directory):
+                configmap = _grafana_dashboard_configmap(plan())
+            self.assertTrue(any(key.startswith("sim-report-") for key in configmap["data"]))
 
     def test_kubectl_logging_redacts_coordinator_parameters(self):
         command = _redacted_command([

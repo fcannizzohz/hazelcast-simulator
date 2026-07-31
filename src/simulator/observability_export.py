@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -33,6 +34,7 @@ class ObservabilityExportCommand:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         self.output_dir = Path(output_dir).expanduser() if output_dir else self.run_path / f"observability-export-{timestamp}"
         self.overwrite = overwrite
+        self.discovered_runs = []
 
     def run(self):
         if self.output_dir.exists():
@@ -84,12 +86,35 @@ class ObservabilityExportCommand:
         )
 
     def _write_report_dashboards(self):
-        dashboards = ReportDashboardGenerator(
-            self.report, f"Simulator Run {self.report.timestamp}"
-        ).generate()
         target = self.output_dir / "grafana/dashboards/simulator-run"
-        for dashboard in dashboards:
-            (target / f"{dashboard['uid']}.json").write_text(json.dumps(dashboard, indent=2) + "\n")
+        for run in self._discover_runs():
+            dashboards = ReportDashboardGenerator(
+                run, f"Simulator Run {run.timestamp}"
+            ).generate()
+            for dashboard in dashboards:
+                (target / f"{dashboard['uid']}.json").write_text(json.dumps(dashboard, indent=2) + "\n")
+
+    def _discover_runs(self):
+        runs_root = next((parent for parent in (self.run_path, *self.run_path.parents)
+                          if parent.name == "runs"), None)
+        candidates = []
+        if runs_root and runs_root.is_dir():
+            for test_dir in sorted(runs_root.iterdir()):
+                if not test_dir.is_dir():
+                    continue
+                candidates.extend(path for path in sorted(test_dir.iterdir())
+                                  if path.is_dir() and re.match(r"^\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2}$", path.name))
+        if self.run_path not in candidates:
+            candidates.append(self.run_path)
+        runs = []
+        for candidate in candidates:
+            report = ReportData(candidate)
+            if not (report.path / "report.csv").is_file():
+                info(f"Skipping non-reportable run for Grafana export: {candidate}")
+                continue
+            runs.append(report)
+        self.discovered_runs = [str(report.run_path) for report in runs]
+        return runs
 
     def _copy_operational_assets(self):
         root = Path(simulator_home) / "observability"
@@ -173,6 +198,7 @@ class ObservabilityExportCommand:
             "source_run": str(self.run_path),
             "report_timestamp": self.report.timestamp,
             "prometheus_snapshot": snapshot,
+            "runs": self.discovered_runs,
             "images": {"prometheus": "prom/prometheus:latest", "grafana": "grafana/grafana:latest"},
         }
         (self.output_dir / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))

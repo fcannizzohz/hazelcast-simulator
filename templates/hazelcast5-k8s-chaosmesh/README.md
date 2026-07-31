@@ -53,6 +53,17 @@ mc: {enabled: true}
 observability: {enabled: true}
 ```
 
+When enabled, `inventory install k8s` waits for Management Center, Prometheus,
+and Grafana, then verifies the Prometheus `hazelcast-mc` target is scraping the
+Management Center `/metrics` endpoint. Export completed runs before teardown:
+
+```bash
+docker-sim perftest export_observability runs/<test>/<run-timestamp>
+```
+
+The export adds a Grafana dashboard for every reportable run under `runs/` and
+includes the retained Prometheus data for offline analysis.
+
 For physical multi-DC placement, use node label values returned by the GKE
 helper or supplied by the cluster administrator. The member counts are a
 distribution target: a `3-2-2` plan guarantees that distribution across the

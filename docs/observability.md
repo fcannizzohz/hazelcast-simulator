@@ -21,8 +21,10 @@ docker-sim inventory install observability
 
 For a Kubernetes project, set `mc.enabled: true` and
 `observability.enabled: true` and use `docker-sim inventory install k8s`; the
-Kubernetes installer deploys the stack. Both installers print the available
-endpoints on completion. A license supplied through `HZ_LICENSEKEY` is applied
+Kubernetes installer deploys the stack, waits for Management Center, Prometheus,
+and Grafana, and verifies that Prometheus sees the Management Center metrics
+target as healthy. Both installers print the available endpoints on completion.
+A license supplied through `HZ_LICENSEKEY` is applied
 to Management Center, but JVM process arguments can make that value visible
 while Management Center is running.
 
@@ -48,3 +50,8 @@ as a potentially sensitive artifact.
 
 The [Kubernetes observability tutorial](../examples/k8s/README.md#12-use-observability)
 shows live access and the full inventory lifecycle.
+
+The offline bundle discovers all reportable run directories below the project's
+`runs/` directory and provisions one Simulator dashboard per run in Grafana.
+Incomplete runs without `report/report.csv` are skipped and listed in the export
+output.

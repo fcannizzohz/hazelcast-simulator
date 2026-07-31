@@ -895,14 +895,39 @@ docker-sim inventory control diagnostics-off --cluster workers
 
 ### 12. Use Observability
 
-Prometheus scrapes Management Center metrics. Grafana is provisioned with the
-repository dashboards and Prometheus datasource. Cluster-private services can
-be inspected with temporary port forwards:
+The three-node smoke fixture enables Management Center, Prometheus, and Grafana
+by default. `inventory install k8s` waits for all three workloads and verifies
+that Prometheus reports the Management Center (`job=hazelcast-mc`) scrape target
+as `up`; installation fails if the metrics path is unavailable.
+
+Grafana is provisioned with the repository dashboards and a Prometheus
+datasource. Cluster-private services can be inspected with temporary port
+forwards:
 
 ```bash
 docker-sim kubectl -n simulator port-forward service/management-center 8080:8080
 docker-sim kubectl -n simulator port-forward service/grafana 3000:3000
 ```
+
+Inspect the scrape path directly when diagnosing a failure:
+
+```bash
+docker-sim kubectl -n simulator port-forward service/management-center 8080:8080
+curl -fsS http://127.0.0.1:8080/metrics | head
+docker-sim kubectl -n simulator port-forward service/prometheus 9090:9090
+curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=active'
+```
+
+After a run, export the observability data before tearing down the cluster:
+
+```bash
+docker-sim perftest export_observability runs/<test>/<run-timestamp>
+```
+
+The export discovers every reportable run below `runs/`, creates a separate
+Simulator dashboard for each run, and includes the Prometheus TSDB snapshot,
+run artifacts, and dashboards in a portable Docker Compose bundle. Start it
+with `docker compose up -d` and open Grafana on port 3000 for offline analysis.
 
 Chaos lifecycle events are appended to `.simulator-k8s/chaos-events.jsonl` and
 copied into each completed run as `chaos-events.jsonl` for chart correlation.

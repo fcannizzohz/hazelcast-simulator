@@ -8,6 +8,8 @@ import subprocess
 import time
 from copy import deepcopy
 from os import path
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import yaml
 
@@ -116,6 +118,7 @@ def kubernetes_install(inventory_plan):
     _apply_rendered_manifests(inventory_plan)
     _wait_for_hazelcast(inventory_plan)
     _wait_for_supporting_workloads(inventory_plan)
+    _verify_observability(inventory_plan)
     _verify_dc_distribution(inventory_plan)
     kubernetes_import(inventory_plan)
     _print_endpoints(inventory_plan)
@@ -847,6 +850,43 @@ def _wait_for_supporting_workloads(inventory_plan):
     )
 
 
+def _observability_http(inventory_plan, service_name, port, request_path):
+    base_url = _start_port_forward(inventory_plan, service_name, port)
+    with urlopen(f"{base_url}{request_path}", timeout=5) as response:
+        return json.loads(response.read().decode("utf-8")) if request_path.startswith("/api/") else response.read()
+
+
+def _verify_observability(inventory_plan):
+    if not observability_enabled(inventory_plan):
+        return
+    if not _mc_enabled(inventory_plan):
+        exit_with_error("observability.enabled requires mc.enabled so Prometheus has a metrics source")
+
+    timeout = int((inventory_plan.get("kubernetes") or {}).get("wait_timeout_seconds", 600))
+    deadline = time.time() + timeout
+    last_error = "unknown error"
+    while time.time() < deadline:
+        try:
+            metrics = _observability_http(inventory_plan, management_center_name(inventory_plan), 8080, "/metrics")
+            if not metrics.strip():
+                raise RuntimeError("Management Center /metrics returned an empty response")
+            health = _observability_http(inventory_plan, "grafana", 3000, "/api/health")
+            if health.get("database") not in (None, "ok"):
+                raise RuntimeError(f"Grafana health is not ready: {health}")
+            targets = _observability_http(inventory_plan, "prometheus", 9090, "/api/v1/targets?state=active")
+            active = (targets.get("data") or {}).get("activeTargets") or []
+            mc_targets = [target for target in active if (target.get("labels") or {}).get("job") == "hazelcast-mc"]
+            if not any(target.get("health") == "up" for target in mc_targets):
+                details = ", ".join(target.get("lastError", "target is not up") for target in mc_targets)
+                raise RuntimeError(f"Prometheus hazelcast-mc target is not up: {details or 'target missing'}")
+            info("Observability readiness and Prometheus Management Center scrape verified")
+            return
+        except (OSError, URLError, ValueError, RuntimeError) as error:
+            last_error = str(error)
+            time.sleep(2)
+    exit_with_error(f"Timed out verifying observability readiness and metrics scrape: {last_error}")
+
+
 def _verify_dc_distribution(inventory_plan):
     expected = {dc["name"]: int(dc["members"]) for dc in _dc_plans(inventory_plan)}
     observed = {name: 0 for name in expected}
@@ -1342,6 +1382,25 @@ def _grafana_dashboard_configmap(inventory_plan):
             if filename.endswith(".json"):
                 with open(os.path.join(dashboard_dir, filename)) as f:
                     dashboards[filename] = f.read()
+    # Include every completed Simulator run currently available in the project.
+    # The dashboard payload embeds its report data, so Grafana remains useful
+    # after the local run directory is no longer mounted in the cluster.
+    from simulator.perftest_report_grafana import ReportData, ReportDashboardGenerator
+    runs_root = path.join(os.getcwd(), "runs")
+    if path.isdir(runs_root):
+        for test_name in sorted(os.listdir(runs_root)):
+            test_dir = path.join(runs_root, test_name)
+            if not path.isdir(test_dir):
+                continue
+            for timestamp in sorted(os.listdir(test_dir)):
+                run_dir = path.join(test_dir, timestamp)
+                if not path.isdir(run_dir) or not re.match(r"^\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2}$", timestamp):
+                    continue
+                report = ReportData(run_dir)
+                if not path.isfile(path.join(report.path, "report.csv")):
+                    continue
+                for dashboard in ReportDashboardGenerator(report, f"Simulator Run {report.timestamp}").generate():
+                    dashboards[f"{dashboard['uid']}.json"] = json.dumps(dashboard, indent=2) + "\n"
     return {
         "apiVersion": "v1",
         "kind": "ConfigMap",
