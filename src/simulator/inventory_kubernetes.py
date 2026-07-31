@@ -1079,8 +1079,10 @@ def _hazelcast_manifest(inventory_plan):
             item.get("name") == "PROMETHEUS_PORT" for item in env
     ):
         # Kubernetes injects PROMETHEUS_PORT as tcp://host:port from the
-        # Prometheus Service. The Hazelcast image expects host:port instead.
-        env.append({"name": "PROMETHEUS_PORT", "value": "prometheus:9090"})
+        # Prometheus Service. The Hazelcast image treats that as a member-side
+        # JMX exporter bind address, but this stack scrapes Management Center
+        # instead, so explicitly disable the unused member exporter.
+        env.append({"name": "PROMETHEUS_PORT", "value": ""})
     if env:
         spec["env"] = env
     if (hz.get("custom_config") or {}).get("file"):

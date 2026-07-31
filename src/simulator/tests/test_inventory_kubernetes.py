@@ -140,7 +140,7 @@ class TestInventoryKubernetes(unittest.TestCase):
         self.assertTrue(all(doc["metadata"]["labels"][INSTANCE_LABEL] == "test-k8s" for doc in manifests))
         self.assertEqual("ZONE", hazelcast["spec"]["highAvailabilityMode"])
         self.assertEqual(
-            [{"name": "PROMETHEUS_PORT", "value": "prometheus:9090"}],
+            [{"name": "PROMETHEUS_PORT", "value": ""}],
             hazelcast["spec"]["env"],
         )
         self.assertIn("providers", provider["data"]["dashboard.yaml"])

@@ -8,10 +8,3 @@
   mutable upstream releases at image-build time.
 - Emit the resolved tool versions in the image and expose a single command for
   inspecting them; have CI verify that the emitted versions match the manifest.
-
-## Kubernetes smoke-test observability
-
-- Extend the Kubernetes smoke test to install Management Center, Prometheus,
-  and Grafana, then verify their readiness and the metrics scrape path.
-- Add the smoke-test run to a Grafana dashboard.
-- Export the Grafana data for offline analysis.
