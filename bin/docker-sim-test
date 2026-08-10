@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+workspace="$tmp/workspace"
+mkdir -p "$workspace/bin" "$workspace/projects" "$workspace/.m2" "$tmp/fake-bin"
+cp "$repo/bin/docker-sim" "$workspace/bin/docker-sim"
+chmod +x "$workspace/bin/docker-sim"
+
+cat > "$tmp/fake-bin/docker" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$DOCKER_ARGS_FILE"
+EOF
+chmod +x "$tmp/fake-bin/docker"
+
+export PATH="$tmp/fake-bin:$PATH"
+export DOCKER_ARGS_FILE="$tmp/docker-args"
+export HOME="$tmp/home"
+mkdir -p "$HOME"
+
+assert_contains() {
+    local expected="$1"
+    local file="$2"
+    if ! grep -Fxq -- "$expected" "$file"; then
+        echo "Expected line not found: $expected" >&2
+        echo "Actual:" >&2
+        cat "$file" >&2
+        exit 1
+    fi
+}
+
+"$workspace/bin/docker-sim" --help >/dev/null
+
+"$workspace/bin/docker-sim" perftest create --list
+assert_contains "$workspace/projects:/workspace" "$DOCKER_ARGS_FILE"
+assert_contains "$workspace/.m2:/root/.m2" "$DOCKER_ARGS_FILE"
+
+override_m2="$tmp/custom-m2"
+mkdir -p "$override_m2"
+SIMULATOR_M2="$override_m2" "$workspace/bin/docker-sim" perftest create --list
+assert_contains "$override_m2:/root/.m2" "$DOCKER_ARGS_FILE"
+
+project="$workspace/projects/sample"
+mkdir -p "$project"
+PROJECT="$project" "$workspace/bin/docker-sim" perftest run
+assert_contains "$project:/workspace" "$DOCKER_ARGS_FILE"
+
+outside="$tmp/outside"
+mkdir -p "$outside"
+if PROJECT="$outside" "$workspace/bin/docker-sim" perftest run 2>"$tmp/error"; then
+    echo "Expected PROJECT outside workspace to fail" >&2
+    exit 1
+fi
+assert_contains "ERROR: PROJECT must be below $workspace/projects" "$tmp/error"
+
+echo "docker-sim tests passed"

@@ -48,23 +48,24 @@ Choose a location outside the checkout and create the required directories:
 
 ```bash
 export SIMULATOR_WORKSPACE="$HOME/simulator-workspace"
-mkdir -p "$SIMULATOR_WORKSPACE/bin" "$SIMULATOR_WORKSPACE/projects" "$HOME/.m2"
+mkdir -p "$SIMULATOR_WORKSPACE/bin" "$SIMULATOR_WORKSPACE/projects" "$SIMULATOR_WORKSPACE/.m2"
 ```
 
-Simulator shares your existing Maven cache at `~/.m2`; it does not create a
-second cache in the workspace. Verify that Docker can write through this mount
+Simulator stores the shared Maven cache at `$SIMULATOR_WORKSPACE/.m2` by
+default. You can set `SIMULATOR_M2` to another cache path, or use a symlink to
+reuse an existing `~/.m2`. Verify that Docker can write through this mount
 before using a tutorial. The probe removes the file that it creates:
 
 ```bash
 docker run --rm \
-  -v "$HOME/.m2:/root/.m2" \
+  -v "${SIMULATOR_M2:-$SIMULATOR_WORKSPACE/.m2}:/root/.m2" \
   --entrypoint sh "$SIM_IMAGE" \
   -c 'test -r /root/.m2 && test -w /root/.m2 && touch /root/.m2/.simulator-mount-check && rm /root/.m2/.simulator-mount-check'
 ```
 
-If this fails, create `~/.m2` with ownership that Docker can write, and, on
-Docker Desktop, add your home directory to the file-sharing allowlist. Rerun
-the probe until it succeeds.
+If this fails, create the selected Maven cache directory with ownership that
+Docker can write, and, on Docker Desktop, add that directory to the file-sharing
+allowlist. Rerun the probe until it succeeds.
 
 ## 4. Install the image-supplied launcher
 

@@ -10,11 +10,14 @@ sim_image="${SIM_IMAGE:-hazelcast/simulator:latest}"
 usage() {
     cat >&2 <<EOF
 Usage:
+  docker-sim --help
   docker-sim tutorial-init <scenario> <project>
   PROJECT=$projects_dir/<project> docker-sim <Simulator command> [arguments...]
 
 The launcher must be installed in <simulator-workspace>/bin. Projects belong
-under <simulator-workspace>/projects and the host Maven cache is ~/.m2.
+under <simulator-workspace>/projects. The Maven cache defaults to
+<simulator-workspace>/.m2 when present, otherwise ~/.m2. Set SIMULATOR_M2 to
+override the cache path.
 EOF
 }
 
@@ -23,13 +26,27 @@ if [[ $# -eq 0 ]]; then
     exit 2
 fi
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
 if [[ ! -d "$projects_dir" ]]; then
     echo "ERROR: workspace projects directory does not exist: $projects_dir" >&2
     exit 1
 fi
 
-if [[ ! -d "$HOME/.m2" || ! -r "$HOME/.m2" || ! -w "$HOME/.m2" ]]; then
-    echo "ERROR: ~/.m2 must exist and be readable and writable before running docker-sim" >&2
+m2_dir="${SIMULATOR_M2:-}"
+if [[ -z "$m2_dir" ]]; then
+    if [[ -e "$workspace/.m2" ]]; then
+        m2_dir="$workspace/.m2"
+    else
+        m2_dir="$HOME/.m2"
+    fi
+fi
+
+if [[ ! -d "$m2_dir" || ! -r "$m2_dir" || ! -w "$m2_dir" ]]; then
+    echo "ERROR: Maven cache must exist and be readable and writable before running docker-sim: $m2_dir" >&2
     exit 1
 fi
 
@@ -59,7 +76,7 @@ else
     docker_args+=(-v "$projects_dir:/workspace")
 fi
 
-docker_args+=(-v "$HOME/.m2:/root/.m2")
+docker_args+=(-v "$m2_dir:/root/.m2")
 
 # Cloud login and kubeconfig state are intentionally persisted on the host so
 # every provider command can run through this image-backed launcher.
