@@ -2765,10 +2765,7 @@
   "templating": {
     "list": [
       {
-        "current": {
-          "text": "dev",
-          "value": "dev"
-        },
+        "current": {},
         "datasource": {
           "type": "prometheus",
           "uid": "prometheus"
