@@ -15,6 +15,7 @@
  */
 package com.hazelcast.simulator.tests.map;
 
+import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.core.Pipelining;
 import com.hazelcast.map.IMap;
 import com.hazelcast.simulator.probes.LatencyProbe;
@@ -42,8 +43,9 @@ import java.util.function.Supplier;
  * Retries idempotent map operations across expected member-loss and
  * split-brain-protection failures.
  *
- * <p>Only {@link SplitBrainProtectionException} and
- * {@link TargetDisconnectedException} are retried. Every retry uses the same
+ * <p>Only {@link SplitBrainProtectionException},
+ * {@link TargetDisconnectedException}, and {@link OperationTimeoutException}
+ * are retried. Every retry uses the same
  * map, key and value as the original invocation. Other failures remain fatal.
  * The test verifies that operations recovered after the final expected fault
  * and that the prepared key set was preserved.</p>
@@ -56,6 +58,7 @@ public class FailureTolerantLongByteArrayMap extends LongByteArrayMapTest {
     private final LongAdder successfulOperations = new LongAdder();
     private final LongAdder protectionFailures = new LongAdder();
     private final LongAdder targetDisconnections = new LongAdder();
+    private final LongAdder operationTimeouts = new LongAdder();
     private final LongAdder pendingRetries = new LongAdder();
     private final AtomicLong lastSuccessNanos = new AtomicLong(-1);
     private final AtomicLong lastExpectedFaultNanos = new AtomicLong(-1);
@@ -188,7 +191,8 @@ public class FailureTolerantLongByteArrayMap extends LongByteArrayMapTest {
         long successful = successfulOperations.sum();
         long protectedFailures = protectionFailures.sum();
         long disconnected = targetDisconnections.sum();
-        long expectedFaults = protectedFailures + disconnected;
+        long timeouts = operationTimeouts.sum();
+        long expectedFaults = protectedFailures + disconnected + timeouts;
         long pending = pendingRetries.sum();
         if (pending != 0) {
             throw new AssertionError(pending + " idempotent map operations were still pending at verification");
@@ -219,8 +223,8 @@ public class FailureTolerantLongByteArrayMap extends LongByteArrayMapTest {
         }
 
         logger.info("Failure-tolerant verification passed: successfulOperations={}, protectionFailures={}, "
-                        + "targetDisconnections={}",
-                successful, protectedFailures, disconnected);
+                        + "targetDisconnections={}, operationTimeouts={}",
+                successful, protectedFailures, disconnected, timeouts);
     }
 
     private <T> T execute(Supplier<T> operation, Consumer<T> verifier) {
@@ -351,6 +355,8 @@ public class FailureTolerantLongByteArrayMap extends LongByteArrayMapTest {
     private void recordExpectedFault(RuntimeException exception) {
         if (exception instanceof SplitBrainProtectionException) {
             protectionFailures.increment();
+        } else if (exception instanceof OperationTimeoutException) {
+            operationTimeouts.increment();
         } else {
             targetDisconnections.increment();
         }
@@ -388,7 +394,8 @@ public class FailureTolerantLongByteArrayMap extends LongByteArrayMapTest {
 
     private RuntimeException findExpectedFault(Throwable throwable) {
         Throwable cause = unwrap(throwable);
-        if (cause instanceof SplitBrainProtectionException || cause instanceof TargetDisconnectedException) {
+        if (cause instanceof SplitBrainProtectionException || cause instanceof TargetDisconnectedException
+                || cause instanceof OperationTimeoutException) {
             return (RuntimeException) cause;
         }
         return null;
