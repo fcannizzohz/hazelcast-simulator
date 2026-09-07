@@ -421,9 +421,20 @@ public class TimeStepModel {
             }
 
             if (constructor == null) {
+                for (Constructor candidate : threadStateClass.getDeclaredConstructors()) {
+                    Class<?>[] parameterTypes = candidate.getParameterTypes();
+                    if (parameterTypes.length == 1 && parameterTypes[0].isAssignableFrom(testClass)
+                            && (constructor == null || constructor.getParameterTypes()[0]
+                            .isAssignableFrom(parameterTypes[0]))) {
+                        constructor = candidate;
+                    }
+                }
+            }
+
+            if (constructor == null) {
                 throw new IllegalTestException("Found no valid constructor for '" + threadStateClass.getName() + "'."
                         + " The constructor should have no arguments or one argument "
-                        + "of type '" + threadStateClass.getName() + "'");
+                        + "compatible with test class '" + testClass.getName() + "'");
             }
 
             try {

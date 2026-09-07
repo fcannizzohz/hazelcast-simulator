@@ -103,7 +103,7 @@ public class LongByteArrayMapTest extends HazelcastTest {
         }
     }
 
-    private IMap<Long, byte[]> getRandomMap() {
+    protected IMap<Long, byte[]> getRandomMap() {
         List<IMap<Long, byte[]>> mapsToSelectFrom;
         if (maps.size() == 1) {
             mapsToSelectFrom = maps.get(0);
@@ -202,10 +202,10 @@ public class LongByteArrayMapTest extends HazelcastTest {
 
     public class ThreadState extends BaseThreadState {
         public static final int HIGHEST_PROBABILITY = 100;
-        private Pipelining<byte[]> pipeline;
-        private int i;
+        protected Pipelining<byte[]> pipeline;
+        protected int i;
 
-        private long fixedKeyOrRandom() {
+        protected long fixedKeyOrRandom() {
             if (fixedKeyDomain > 0 && fixedKeyDomain < keyDomain && fixedKeyProbability > 0 &&
                     randomInt(HIGHEST_PROBABILITY) < fixedKeyProbability) {
                 return randomLong(fixedKeyDomain);
@@ -213,20 +213,20 @@ public class LongByteArrayMapTest extends HazelcastTest {
             return randomKey();
         }
 
-        private long randomKey() {
+        protected long randomKey() {
             return randomLong(keyDomain);
         }
 
-        private byte[] randomValue() {
+        protected byte[] randomValue() {
             return values[randomInt(values.length)];
         }
     }
 
-    private static final class UpdateEntryProcessor implements EntryProcessor<Long, byte[], Object> {
+    protected static final class UpdateEntryProcessor implements EntryProcessor<Long, byte[], Object> {
 
         private final byte increment;
 
-        private UpdateEntryProcessor(byte increment) {
+        protected UpdateEntryProcessor(byte increment) {
             this.increment = increment;
         }
 
