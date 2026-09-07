@@ -33,6 +33,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -50,7 +51,7 @@ public class FailureTolerantLongByteArrayMapTest {
 
     private TestSubject test;
     private IMap<Long, byte[]> map;
-    private LongByteArrayMapTest.ThreadState state;
+    private FailureTolerantLongByteArrayMap.ThreadState state;
 
     @Before
     @SuppressWarnings("unchecked")
@@ -74,28 +75,28 @@ public class FailureTolerantLongByteArrayMapTest {
     @Test
     public void getRetriesSplitBrainProtectionFailure() {
         byte[] value = {42};
-        when(map.get(0L))
-                .thenThrow(new SplitBrainProtectionException("expected"))
-                .thenReturn(value);
+        when(map.getAsync(0L))
+                .thenReturn(CompletableFuture.failedFuture(new SplitBrainProtectionException("expected")))
+                .thenReturn(CompletableFuture.completedFuture(value));
 
-        test.get(state);
-        awaitInvocations(() -> verify(map, times(2)).get(0L));
+        assertArrayEquals(value, test.get(state).join());
+        awaitInvocations(() -> verify(map, times(2)).getAsync(0L));
         test.verifyFailureRecovery();
     }
 
     @Test
     public void setRetriesSameValueAfterTargetDisconnection() {
-        doThrow(new TargetDisconnectedException("expected"))
-                .doNothing()
-                .when(map).set(anyLong(), any(byte[].class));
+        when(map.setAsync(anyLong(), any(byte[].class)))
+                .thenReturn(CompletableFuture.failedFuture(new TargetDisconnectedException("expected")))
+                .thenReturn(CompletableFuture.completedFuture(null));
 
-        test.set(state);
+        test.set(state).join();
 
-        awaitInvocations(() -> verify(map, times(2)).set(anyLong(), any(byte[].class)));
+        awaitInvocations(() -> verify(map, times(2)).setAsync(anyLong(), any(byte[].class)));
 
         ArgumentCaptor<Long> keyCaptor = ArgumentCaptor.forClass(Long.class);
         ArgumentCaptor<byte[]> valueCaptor = ArgumentCaptor.forClass(byte[].class);
-        verify(map, times(2)).set(keyCaptor.capture(), valueCaptor.capture());
+        verify(map, times(2)).setAsync(keyCaptor.capture(), valueCaptor.capture());
         assertEquals(keyCaptor.getAllValues().get(0), keyCaptor.getAllValues().get(1));
         assertSame(valueCaptor.getAllValues().get(0), valueCaptor.getAllValues().get(1));
         test.verifyFailureRecovery();
@@ -115,7 +116,7 @@ public class FailureTolerantLongByteArrayMapTest {
 
     @Test
     public void overridesEveryMapTimeStep() throws NoSuchMethodException {
-        for (Method method : LongByteArrayMapTest.class.getDeclaredMethods()) {
+        for (Method method : FailureTolerantLongByteArrayMap.class.getDeclaredMethods()) {
             if (method.isAnnotationPresent(TimeStep.class)) {
                 FailureTolerantLongByteArrayMap.class.getDeclaredMethod(method.getName(), method.getParameterTypes());
             }
@@ -128,21 +129,29 @@ public class FailureTolerantLongByteArrayMapTest {
         TimeStepModel model = new TimeStepModel(FailureTolerantLongByteArrayMap.class,
                 new PropertyBinding(testCase));
 
-        assertEquals(LongByteArrayMapTest.class,
+        assertEquals(FailureTolerantLongByteArrayMap.class,
                 model.getThreadStateConstructor("").getParameterTypes()[0]);
         model.getThreadStateConstructor("").newInstance(test);
     }
 
     @Test(expected = IllegalStateException.class)
     public void unexpectedExceptionRemainsFatal() {
-        when(map.get(0L)).thenThrow(new IllegalStateException("unexpected"));
-        test.get(state);
+        when(map.getAsync(0L)).thenReturn(CompletableFuture.failedFuture(new IllegalStateException("unexpected")));
+        try {
+            test.get(state).join();
+        } catch (CompletionException failure) {
+            throw (IllegalStateException) failure.getCause();
+        }
     }
 
     @Test(expected = AssertionError.class)
     public void missingSuccessfulValueFailsCorrectnessCheck() {
-        when(map.get(0L)).thenReturn(null);
-        test.get(state);
+        when(map.getAsync(0L)).thenReturn(CompletableFuture.completedFuture(null));
+        try {
+            test.get(state).join();
+        } catch (CompletionException failure) {
+            throw (AssertionError) failure.getCause();
+        }
     }
 
     private static void awaitInvocations(Runnable assertion) {
@@ -173,14 +182,5 @@ public class FailureTolerantLongByteArrayMapTest {
             field.set(this, new HazelcastInstances(List.of(instance)));
         }
 
-        @Override
-        protected long retryPauseMillis() {
-            return 0;
-        }
-
-        @Override
-        protected long minimumRecoveryMillis() {
-            return 0;
-        }
     }
 }
