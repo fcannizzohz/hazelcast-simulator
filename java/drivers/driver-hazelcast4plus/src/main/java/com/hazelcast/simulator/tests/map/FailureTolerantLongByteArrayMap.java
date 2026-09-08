@@ -27,7 +27,6 @@ import com.hazelcast.simulator.test.annotations.Verify;
 import com.hazelcast.spi.exception.TargetDisconnectedException;
 import com.hazelcast.splitbrainprotection.SplitBrainProtectionException;
 
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -35,9 +34,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -49,14 +45,12 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * A native-async map workload which retries transient client and cluster failures.
+ * A native-async map workload which records transient client and cluster failures as drops.
  *
- * <p>The retry policy and recovery verification can be configured as normal Simulator test properties. For example:
+ * <p>Backpressure and recovery verification can be configured as normal Simulator test properties. For example:
  * <pre>
  * {@code
  *   maxOutstandingOperations: 256
- *   retryDelayMillis: 100
- *   retrySchedulerThreadCount: 2
  *   verifyMapSize: true
  *   requireSuccessAfterFailure: true
  * }
@@ -66,38 +60,8 @@ import java.util.function.Supplier;
  */
 public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTest {
 
-    /**
-     * Maximum number of admitted logical operations which may be outstanding in this workload instance.
-     *
-     * <p>The default of {@code 256} bounds the memory retained by active Hazelcast invocations and operations waiting to
-     * retry. The limit is shared by all timestep threads, maps, and target clients in one worker JVM. When it is reached,
-     * the timestep thread blocks until an admitted logical operation completes or the test stops; the operation is not
-     * submitted to Hazelcast before capacity is available. A retrying logical operation retains its capacity permit for
-     * its entire lifetime, including the delay between attempts.
-     *
-     * <p>Use a lower value for large payloads or constrained client heaps. This setting bounds dynamic operation backlog,
-     * but cannot prevent an out-of-memory error when static workload data such as {@code valueCount * value size} already
-     * consumes most of the heap. Values smaller than {@code 1} are rejected during setup.
-     */
+    /** Maximum number of unresolved one-shot asynchronous invocations in this worker JVM. */
     public int maxOutstandingOperations = 256;
-
-    /**
-     * Delay, in milliseconds, between a retryable failure and the next attempt of the same logical operation.
-     *
-     * <p>The default of {@code 100} avoids a tight retry loop while a client is offline or a cluster cannot satisfy
-     * split-brain protection. Set this to {@code 0} for an immediate retry, which is useful in unit tests but can produce
-     * substantial retry traffic in a failure experiment. Negative values are rejected during setup.
-     */
-    public long retryDelayMillis = 100;
-
-    /**
-     * Number of daemon threads used to schedule retry attempts.
-     *
-     * <p>These threads do not execute synchronous map operations: they only initiate native asynchronous Hazelcast calls.
-     * Increasing this value can reduce retry-submission delay when many logical operations become eligible to retry at once.
-     * Each logical operation still has at most one active attempt. Values smaller than {@code 1} are rejected during setup.
-     */
-    public int retrySchedulerThreadCount = 2;
 
     /**
      * Whether verification checks that every configured map still contains exactly {@link #keyDomain} entries.
@@ -110,7 +74,7 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
     public boolean verifyMapSize = true;
 
     /**
-     * Whether verification requires a successful logical operation after the most recently observed retryable failure.
+     * Whether verification requires a successful logical operation after the most recently observed expected failure.
      *
      * <p>When {@code true}, a run which observes an expected client or cluster failure must also demonstrate recovery before
      * it can pass. Set it to {@code false} when a scenario intentionally ends while the cluster remains unavailable. The test
@@ -118,21 +82,23 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
      */
     public boolean requireSuccessAfterFailure = true;
 
-    private ScheduledExecutorService retryScheduler;
     private Semaphore outstandingPermits;
     private final Set<CompletableFuture<?>> outstanding = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final LongAdder issuedOperations = new LongAdder();
     private final LongAdder completedOperations = new LongAdder();
-    private final LongAdder retries = new LongAdder();
-    private final LongAdder expectedFailures = new LongAdder();
+    private final LongAdder droppedOperations = new LongAdder();
+    private final LongAdder splitBrainDrops = new LongAdder();
+    private final LongAdder clientOfflineDrops = new LongAdder();
+    private final LongAdder targetDisconnectedDrops = new LongAdder();
+    private final LongAdder operationTimeoutDrops = new LongAdder();
+    private final LongAdder shutdownCancellations = new LongAdder();
     private final LongAdder backpressuredOperations = new LongAdder();
     private final AtomicInteger outstandingOperationCount = new AtomicInteger();
     private final AtomicInteger peakOutstandingOperations = new AtomicInteger();
     private final AtomicLong lastSuccessNanos = new AtomicLong(-1);
-    private final AtomicLong lastExpectedFailureNanos = new AtomicLong(-1);
+    private final AtomicLong lastDroppedNanos = new AtomicLong(-1);
     private final AtomicReference<Throwable> unexpectedFailure = new AtomicReference<>();
     private final AtomicBoolean stopping = new AtomicBoolean();
-    private final AtomicBoolean firstExpectedFailure = new AtomicBoolean();
 
     @Override
     @Setup
@@ -141,85 +107,68 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
             throw new IllegalArgumentException("maxOutstandingOperations must be at least 1: "
                     + maxOutstandingOperations);
         }
-        if (retryDelayMillis < 0) {
-            throw new IllegalArgumentException("retryDelayMillis must not be negative: " + retryDelayMillis);
-        }
-        if (retrySchedulerThreadCount < 1) {
-            throw new IllegalArgumentException("retrySchedulerThreadCount must be at least 1: "
-                    + retrySchedulerThreadCount);
-        }
         super.setUp();
         outstandingPermits = new Semaphore(maxOutstandingOperations);
-        retryScheduler = Executors.newScheduledThreadPool(retrySchedulerThreadCount, runnable -> {
-            Thread thread = new Thread(runnable, "failure-tolerant-map-retry");
-            thread.setDaemon(true);
-            return thread;
-        });
-        logger.info("Failure-tolerant map configuration: maxOutstandingOperations={}, retryDelayMillis={}, "
-                        + "retrySchedulerThreadCount={}, "
-                        + "verifyMapSize={}, requireSuccessAfterFailure={}",
-                maxOutstandingOperations, retryDelayMillis, retrySchedulerThreadCount,
-                verifyMapSize, requireSuccessAfterFailure);
+        logger.info("Failure-tolerant map configuration: maxOutstandingOperations={}, verifyMapSize={}, "
+                        + "requireSuccessAfterFailure={}", maxOutstandingOperations, verifyMapSize,
+                requireSuccessAfterFailure);
     }
 
-    @TimeStep(prob = -1)
+    @TimeStep(prob = -1, countSuccessfulCompletions = true)
     public CompletableFuture<byte[]> get(ThreadState state) {
         IMap<Long, byte[]> map = getRandomMap();
         long key = state.fixedKeyOrRandom();
-        return retry(() -> map.getAsync(key), value -> verifyValue(value, "get"));
+        return submit(() -> map.getAsync(key), value -> verifyValue(value, "get"));
     }
 
     /** Hazelcast has no native asynchronous getAll API. Keep this operation disabled. */
-    @TimeStep(prob = 0)
+    @TimeStep(prob = 0, countSuccessfulCompletions = true)
     public CompletableFuture<Map<Long, byte[]>> getAll(ThreadState state) {
         return unsupportedAsyncOperation("getAll");
     }
 
-    @TimeStep(prob = 0)
+    @TimeStep(prob = 0, countSuccessfulCompletions = true)
     public CompletableFuture<byte[]> getAsync(ThreadState state) {
         IMap<Long, byte[]> map = getRandomMap();
         long key = state.randomKey();
-        return retry(() -> map.getAsync(key), value -> verifyValue(value, "getAsync"));
+        return submit(() -> map.getAsync(key), value -> verifyValue(value, "getAsync"));
     }
 
-    @TimeStep(prob = 0.1)
+    @TimeStep(prob = 0.1, countSuccessfulCompletions = true)
     public CompletableFuture<byte[]> put(ThreadState state) {
         IMap<Long, byte[]> map = getRandomMap();
         long key = state.randomKey();
         byte[] value = state.randomValue();
-        return retry(() -> map.putAsync(key, value), previous -> verifyValue(previous, "put"));
+        return submit(() -> map.putAsync(key, value), previous -> verifyValue(previous, "put"));
     }
 
     @TimeStep(prob = 0)
     public CompletableFuture<Void> deleteAndPut(ThreadState state) {
-        IMap<Long, byte[]> map = getRandomMap();
-        long key = state.randomKey();
-        byte[] value = state.randomValue();
-        return retry(() -> map.deleteAsync(key).thenCompose(ignored -> map.setAsync(key, value)), ignored -> { });
+        return unsupportedAsyncOperation("deleteAndPut");
     }
 
-    @TimeStep(prob = 0.0)
+    @TimeStep(prob = 0.0, countSuccessfulCompletions = true)
     public CompletableFuture<byte[]> putAsync(ThreadState state) {
         IMap<Long, byte[]> map = getRandomMap();
         long key = state.randomKey();
         byte[] value = state.randomValue();
-        return retry(() -> map.putAsync(key, value), previous -> verifyValue(previous, "putAsync"));
+        return submit(() -> map.putAsync(key, value), previous -> verifyValue(previous, "putAsync"));
     }
 
-    @TimeStep(prob = 0)
+    @TimeStep(prob = 0, countSuccessfulCompletions = true)
     public CompletableFuture<Void> set(ThreadState state) {
         IMap<Long, byte[]> map = getRandomMap();
         long key = state.randomKey();
         byte[] value = state.randomValue();
-        return retry(() -> map.setAsync(key, value), ignored -> { });
+        return submit(() -> map.setAsync(key, value), ignored -> { });
     }
 
-    @TimeStep(prob = 0)
+    @TimeStep(prob = 0, countSuccessfulCompletions = true)
     public CompletableFuture<Void> setAsync(ThreadState state) {
         IMap<Long, byte[]> map = getRandomMap();
         long key = state.randomKey();
         byte[] value = state.randomValue();
-        return retry(() -> map.setAsync(key, value), ignored -> { });
+        return submit(() -> map.setAsync(key, value), ignored -> { });
     }
 
     /** Hazelcast has no native asynchronous size API. Keep this operation disabled. */
@@ -230,19 +179,14 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
 
     @TimeStep(prob = 0)
     public CompletableFuture<Map<Long, Object>> updateAllUsingEntryProcessor() {
-        IMap<Long, byte[]> map = getRandomMap();
-        Set<Long> keys = new HashSet<>(keyDomain);
-        for (long key = 0; key < keyDomain; key++) {
-            keys.add(key);
-        }
-        return retry(() -> map.submitToKeys(keys, new UpdateEntryProcessor((byte) 1)), ignored -> { });
+        return unsupportedAsyncOperation("updateAllUsingEntryProcessor");
     }
 
-    @TimeStep(prob = 0)
+    @TimeStep(prob = 0, countSuccessfulCompletions = true)
     public CompletableFuture<byte[]> pipelinedGet(ThreadState state) {
         IMap<Long, byte[]> map = getRandomMap();
         long key = state.randomKey();
-        return retry(() -> map.getAsync(key), value -> verifyValue(value, "pipelinedGet"));
+        return submit(() -> map.getAsync(key), value -> verifyValue(value, "pipelinedGet"));
     }
 
     @AfterRun
@@ -251,15 +195,16 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
             CancellationException cancellation = new CancellationException("Map workload stopped");
             outstanding.forEach(future -> {
                 synchronized (future) {
+                    shutdownCancellations.increment();
                     future.completeExceptionally(cancellation);
                 }
             });
-            if (retryScheduler != null) {
-                retryScheduler.shutdownNow();
-            }
-            logger.info("Failure-tolerant map stopped: issued={}, completed={}, retries={}, expectedFailures={}, "
-                            + "backpressured={}, peakOutstanding={}, outstanding={}",
-                    issuedOperations.sum(), completedOperations.sum(), retries.sum(), expectedFailures.sum(),
+            logger.info("Failure-tolerant map stopped: issued={}, completed={}, dropped={}, "
+                            + "splitBrainDrops={}, clientOfflineDrops={}, targetDisconnectedDrops={}, "
+                            + "operationTimeoutDrops={}, shutdownCancellations={}, backpressured={}, "
+                            + "peakOutstanding={}, outstanding={}", issuedOperations.sum(), completedOperations.sum(),
+                    droppedOperations.sum(), splitBrainDrops.sum(), clientOfflineDrops.sum(),
+                    targetDisconnectedDrops.sum(), operationTimeoutDrops.sum(), shutdownCancellations.sum(),
                     backpressuredOperations.sum(), peakOutstandingOperations.get(), outstandingOperationCount.get());
         }
     }
@@ -276,16 +221,19 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
         if (completedOperations.sum() == 0) {
             throw new AssertionError("No logical map operation completed successfully");
         }
-        if (requireSuccessAfterFailure && expectedFailures.sum() > 0
-                && lastSuccessNanos.get() <= lastExpectedFailureNanos.get()) {
+        if (requireSuccessAfterFailure && droppedOperations.sum() > 0
+                && lastSuccessNanos.get() <= lastDroppedNanos.get()) {
             throw new AssertionError("No map operation succeeded after the final expected failure");
         }
         if (verifyMapSize) {
             verifyMapSizes();
         }
-        logger.info("Failure-tolerant verification passed: issued={}, completed={}, retries={}, expectedFailures={}, "
-                        + "backpressured={}, peakOutstanding={}, outstanding={}",
-                issuedOperations.sum(), completedOperations.sum(), retries.sum(), expectedFailures.sum(),
+        logger.info("Failure-tolerant verification passed: issued={}, completed={}, dropped={}, "
+                        + "splitBrainDrops={}, clientOfflineDrops={}, targetDisconnectedDrops={}, "
+                        + "operationTimeoutDrops={}, shutdownCancellations={}, backpressured={}, "
+                        + "peakOutstanding={}, outstanding={}", issuedOperations.sum(), completedOperations.sum(),
+                droppedOperations.sum(), splitBrainDrops.sum(), clientOfflineDrops.sum(),
+                targetDisconnectedDrops.sum(), operationTimeoutDrops.sum(), shutdownCancellations.sum(),
                 backpressuredOperations.sum(), peakOutstandingOperations.get(), outstandingOperationCount.get());
     }
 
@@ -296,7 +244,7 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
         super.tearDown();
     }
 
-    private <T> CompletableFuture<T> retry(Supplier<? extends CompletionStage<T>> operation, Consumer<T> verifier) {
+    private <T> CompletableFuture<T> submit(Supplier<? extends CompletionStage<T>> operation, Consumer<T> verifier) {
         if (!acquireOutstandingPermit()) {
             CompletableFuture<T> cancelled = new CompletableFuture<>();
             cancelled.completeExceptionally(new CancellationException("Map workload stopped"));
@@ -315,93 +263,81 @@ public class FailureTolerantLongByteArrayMap extends AbstractLongByteArrayMapTes
             }
         });
 
-        class Attempt implements Runnable {
-            @Override
-            public void run() {
+        // Shutdown may have started after the permit was acquired.  Do not
+        // submit a new Hazelcast invocation once the result has been tracked
+        // and teardown is in progress; otherwise the invocation could outlive
+        // drainOutstandingOperations() and remain untracked.
+        if (isStopping()) {
+            shutdownCancellations.increment();
+            result.completeExceptionally(new CancellationException("Map workload stopped"));
+            return result;
+        }
+
+        CompletionStage<T> attempt;
+        try {
+            attempt = operation.get();
+        } catch (Throwable failure) {
+            handleFailure(result, failure);
+            return result;
+        }
+        if (attempt == null) {
+            completeUnexpected(result, new NullPointerException("Asynchronous map operation returned null"));
+            return result;
+        }
+        attempt.whenComplete((value, failure) -> {
+            if (failure != null) {
+                handleFailure(result, failure);
+                return;
+            }
+            synchronized (result) {
                 if (result.isDone()) {
                     return;
                 }
-                if (isStopping()) {
-                    result.completeExceptionally(new CancellationException("Map workload stopped"));
-                    return;
-                }
-
-                CompletionStage<T> attempt;
                 try {
-                    attempt = operation.get();
-                } catch (Throwable failure) {
-                    handleFailure(failure);
-                    return;
-                }
-                if (attempt == null) {
-                    completeUnexpected(new NullPointerException("Asynchronous map operation returned null"));
-                    return;
-                }
-                attempt.whenComplete((value, failure) -> {
-                    if (result.isDone()) {
-                        return;
-                    }
-                    if (failure != null) {
-                        handleFailure(failure);
-                        return;
-                    }
-                    synchronized (result) {
-                        if (result.isDone()) {
-                            return;
-                        }
-                        try {
-                            verifier.accept(value);
-                            completedOperations.increment();
-                            lastSuccessNanos.accumulateAndGet(System.nanoTime(), Math::max);
-                            result.complete(value);
-                        } catch (Throwable verificationFailure) {
-                            completeUnexpected(verificationFailure);
-                        }
-                    }
-                });
-            }
-
-            private void handleFailure(Throwable failure) {
-                synchronized (result) {
-                    if (result.isDone()) {
-                        return;
-                    }
-                    Throwable expected = findExpectedFailure(failure);
-                    if (expected == null) {
-                        completeUnexpected(unwrap(failure));
-                        return;
-                    }
-                    expectedFailures.increment();
-                    lastExpectedFailureNanos.accumulateAndGet(System.nanoTime(), Math::max);
-                    if (firstExpectedFailure.compareAndSet(false, true)) {
-                        logger.warn("Retrying expected map failure [{}]: {}",
-                                expected.getClass().getSimpleName(), expected.getMessage());
-                    }
-                    if (isStopping()) {
-                        result.completeExceptionally(new CancellationException("Map workload stopped"));
-                        return;
-                    }
-                    try {
-                        retryScheduler.schedule(this, retryDelayMillis, TimeUnit.MILLISECONDS);
-                        retries.increment();
-                    } catch (RejectedExecutionException rejected) {
-                        result.completeExceptionally(new CancellationException("Map workload stopped"));
-                    }
+                    verifier.accept(value);
+                    completedOperations.increment();
+                    lastSuccessNanos.accumulateAndGet(System.nanoTime(), Math::max);
+                    result.complete(value);
+                } catch (Throwable verificationFailure) {
+                    completeUnexpected(result, verificationFailure);
                 }
             }
+        });
+        return result;
+    }
 
-            private void completeUnexpected(Throwable failure) {
-                synchronized (result) {
-                    if (!result.isDone()) {
-                        unexpectedFailure.compareAndSet(null, failure);
-                        result.completeExceptionally(failure);
-                    }
-                }
+    private <T> void handleFailure(CompletableFuture<T> result, Throwable failure) {
+        synchronized (result) {
+            if (result.isDone()) {
+                return;
+            }
+            Throwable expected = findExpectedFailure(failure);
+            if (expected == null) {
+                completeUnexpected(result, unwrap(failure));
+                return;
+            }
+            droppedOperations.increment();
+            if (expected instanceof SplitBrainProtectionException) {
+                splitBrainDrops.increment();
+            } else if (expected instanceof HazelcastClientOfflineException) {
+                clientOfflineDrops.increment();
+            } else if (expected instanceof TargetDisconnectedException) {
+                targetDisconnectedDrops.increment();
+            } else if (expected instanceof OperationTimeoutException) {
+                operationTimeoutDrops.increment();
+            }
+            lastDroppedNanos.accumulateAndGet(System.nanoTime(), Math::max);
+            result.completeExceptionally(unwrap(failure));
+        }
+    }
+
+    private <T> void completeUnexpected(CompletableFuture<T> result, Throwable failure) {
+        synchronized (result) {
+            if (!result.isDone()) {
+                unexpectedFailure.compareAndSet(null, failure);
+                result.completeExceptionally(failure);
             }
         }
-
-        new Attempt().run();
-        return result;
     }
 
     private boolean acquireOutstandingPermit() {

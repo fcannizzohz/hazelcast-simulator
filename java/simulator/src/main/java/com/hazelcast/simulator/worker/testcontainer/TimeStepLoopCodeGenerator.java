@@ -156,6 +156,7 @@ class TimeStepLoopCodeGenerator {
             root.put("isStartNanos", new IsStartNanos(timeStepModel));
             root.put("isAssignableFrom", new IsAssignableFromMethod());
             root.put("isAsyncResult", new IsAsyncResult());
+            root.put("countSuccessfulCompletions", new CountSuccessfulCompletions());
             root.put("Probe", LatencyProbe.class);
             root.put("threadStateClass", getClassName(timeStepModel.getThreadStateClass(executionGroup)));
             root.put("hasProbe", new HasProbeMethod());
@@ -249,6 +250,18 @@ class TimeStepLoopCodeGenerator {
 
             String resultTypeName = ((SimpleScalar) list.get(0)).getAsString();
             return "java.util.concurrent.CompletableFuture".equals(resultTypeName);
+        }
+    }
+
+    private static final class CountSuccessfulCompletions implements TemplateMethodModelEx {
+        @Override
+        public Object exec(List list) throws TemplateModelException {
+            if (list.size() != 1) {
+                throw new TemplateModelException("Wrong number of arguments for method countSuccessfulCompletions().");
+            }
+            Method method = (Method) ((WrapperTemplateModel) list.get(0)).getWrappedObject();
+            return method.getAnnotation(com.hazelcast.simulator.test.annotations.TimeStep.class)
+                    .countSuccessfulCompletions();
         }
     }
 

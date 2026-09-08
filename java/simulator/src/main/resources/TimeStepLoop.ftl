@@ -56,6 +56,7 @@ public class ${className} extends TimeStepLoop {
 
         long iteration = 0;
         while (!testContext.isStopped()) {
+            boolean countInvocation = true;
 <#if probeClass??>
     <#if metronomeClass??>
             final long startNanos = metronome.waitForNext();
@@ -75,6 +76,9 @@ public class ${className} extends TimeStepLoop {
             <#assign resultName = "result">
             <#if isAsyncResult(resultType)>${resultType} ${resultName} = </#if><@timestepMethodCall m=method/>
             <#if isAsyncResult(resultType)>
+                <#if countSuccessfulCompletions(method)>
+                countInvocation = false;
+                </#if>
                 <@handleAsyncResult m=method/>
             </#if>
     <#else>
@@ -93,6 +97,9 @@ public class ${className} extends TimeStepLoop {
             <#if isAsyncResult(resultType)>
                     ${resultType} ${resultName} = </#if><@timestepMethodCall m=method/>
             <#if isAsyncResult(resultType)>
+                    <#if countSuccessfulCompletions(method)>
+                    countInvocation = false;
+                    </#if>
                     <@handleAsyncResult m=method/>
             </#if>
         <#else>
@@ -104,7 +111,9 @@ public class ${className} extends TimeStepLoop {
             }
 </#if>
             iteration++;
-            iterations.lazySet(iteration);
+            if (countInvocation) {
+                iterations.incrementAndGet();
+            }
 <#if logFrequency??>
             logCounter++;
             if(logCounter == ${logFrequency}){
@@ -126,7 +135,16 @@ public class ${className} extends TimeStepLoop {
     }
 
 <#macro handleAsyncResult m>
+    <#if countSuccessfulCompletions(m)>
+                    ${resultName}.whenCompleteAsync((o, throwable) -> {
+                        if (throwable == null) {
+                            ${m.getName()}Probe.recordValue(System.nanoTime() - startNanos);
+                            iterations.incrementAndGet();
+                        }
+                    }, Runnable::run);
+    <#else>
                     ${resultName}.whenCompleteAsync((o, throwable) ->  ${m.getName()}Probe.recordValue(System.nanoTime() - startNanos), Runnable::run);
+    </#if>
 </#macro>
 
 <#macro timestepMethodCall m>

@@ -81,64 +81,68 @@ public class FailureTolerantLongByteArrayMapTest {
         test.minValueLength = 1;
         test.maxValueLength = 1;
         test.maxOutstandingOperations = 1;
-        test.retryDelayMillis = 0;
         test.setTargetInstance(instance);
         test.setUp();
         state = test.new ThreadState();
     }
 
     @Test
-    public void getRetriesSplitBrainProtectionFailure() {
+    public void getDropsSplitBrainProtectionFailure() {
         byte[] value = {42};
         when(map.getAsync(0L))
                 .thenReturn(CompletableFuture.failedFuture(new SplitBrainProtectionException("expected")))
                 .thenReturn(CompletableFuture.completedFuture(value));
 
+        try { test.get(state).join(); fail("expected dropped operation"); }
+        catch (CompletionException expected) { assertTrue(expected.getCause() instanceof SplitBrainProtectionException); }
+        verify(map, times(1)).getAsync(0L);
+        when(map.getAsync(0L)).thenReturn(CompletableFuture.completedFuture(value));
         assertArrayEquals(value, test.get(state).join());
-        awaitInvocations(() -> verify(map, times(2)).getAsync(0L));
         test.verifyFailureRecovery();
     }
 
     @Test
-    public void setRetriesSameValueAfterTargetDisconnection() {
+    public void setDropsTargetDisconnection() {
         when(map.setAsync(anyLong(), any(byte[].class)))
                 .thenReturn(CompletableFuture.failedFuture(new TargetDisconnectedException("expected")))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
+        try { test.set(state).join(); fail("expected dropped operation"); }
+        catch (CompletionException expected) { assertTrue(expected.getCause() instanceof TargetDisconnectedException); }
+        verify(map, times(1)).setAsync(anyLong(), any(byte[].class));
+        when(map.setAsync(anyLong(), any(byte[].class))).thenReturn(CompletableFuture.completedFuture(null));
         test.set(state).join();
-
-        awaitInvocations(() -> verify(map, times(2)).setAsync(anyLong(), any(byte[].class)));
-
-        ArgumentCaptor<Long> keyCaptor = ArgumentCaptor.forClass(Long.class);
-        ArgumentCaptor<byte[]> valueCaptor = ArgumentCaptor.forClass(byte[].class);
-        verify(map, times(2)).setAsync(keyCaptor.capture(), valueCaptor.capture());
-        assertEquals(keyCaptor.getAllValues().get(0), keyCaptor.getAllValues().get(1));
-        assertSame(valueCaptor.getAllValues().get(0), valueCaptor.getAllValues().get(1));
         test.verifyFailureRecovery();
     }
 
     @Test
-    public void asynchronousGetRetriesExpectedFailure() {
+    public void asynchronousGetDropsExpectedFailure() {
         byte[] value = {42};
         when(map.getAsync(0L))
                 .thenReturn(CompletableFuture.failedFuture(new TargetDisconnectedException("expected")))
                 .thenReturn(CompletableFuture.completedFuture(value));
 
+        try { test.getAsync(state).join(); fail("expected dropped operation"); }
+        catch (CompletionException expected) { assertTrue(expected.getCause() instanceof TargetDisconnectedException); }
+        verify(map, times(1)).getAsync(0L);
+        when(map.getAsync(0L)).thenReturn(CompletableFuture.completedFuture(value));
         assertArrayEquals(value, test.getAsync(state).join());
-        awaitInvocations(() -> verify(map, times(2)).getAsync(0L));
         test.verifyFailureRecovery();
     }
 
     @Test
-    public void retriesWrappedExpectedFailure() {
+    public void wrappedExpectedFailureIsDropped() {
         byte[] value = {42};
         when(map.getAsync(0L))
                 .thenReturn(CompletableFuture.failedFuture(
                         new CompletionException(new OperationTimeoutException("expected"))))
                 .thenReturn(CompletableFuture.completedFuture(value));
 
+        try { test.get(state).join(); fail("expected dropped operation"); }
+        catch (CompletionException expected) { assertTrue(expected.getCause() instanceof OperationTimeoutException); }
+        verify(map, times(1)).getAsync(0L);
+        when(map.getAsync(0L)).thenReturn(CompletableFuture.completedFuture(value));
         assertArrayEquals(value, test.get(state).join());
-        awaitInvocations(() -> verify(map, times(2)).getAsync(0L));
         test.verifyFailureRecovery();
     }
 
@@ -173,8 +177,6 @@ public class FailureTolerantLongByteArrayMapTest {
     public void simulatorBindsFailureToleranceProperties() {
         TestCase testCase = new TestCase("id")
                 .setProperty("maxOutstandingOperations", 17)
-                .setProperty("retryDelayMillis", 250)
-                .setProperty("retrySchedulerThreadCount", 4)
                 .setProperty("verifyMapSize", false)
                 .setProperty("requireSuccessAfterFailure", false);
         TestSubject configured = new TestSubject();
@@ -183,8 +185,6 @@ public class FailureTolerantLongByteArrayMapTest {
         new PropertyBinding(testCase).setDriverInstance(driver).bind(configured);
 
         assertEquals(17, configured.maxOutstandingOperations);
-        assertEquals(250, configured.retryDelayMillis);
-        assertEquals(4, configured.retrySchedulerThreadCount);
         assertEquals(false, configured.verifyMapSize);
         assertEquals(false, configured.requireSuccessAfterFailure);
     }
@@ -205,30 +205,14 @@ public class FailureTolerantLongByteArrayMapTest {
         when(map.getAsync(0L))
                 .thenReturn(CompletableFuture.completedFuture(new byte[]{42}))
                 .thenReturn(CompletableFuture.failedFuture(new OperationTimeoutException("expected")));
-        test.retryDelayMillis = 10_000;
-
         test.get(state).join();
         CompletableFuture<byte[]> retrying = test.get(state);
-        awaitInvocations(() -> verify(map, times(2)).getAsync(0L));
+        verify(map, times(2)).getAsync(0L);
         test.requireSuccessAfterFailure = false;
         test.drainOutstandingOperations();
 
         org.junit.Assert.assertTrue(retrying.isCompletedExceptionally());
         test.verifyFailureRecovery();
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void negativeRetryDelayIsRejected() {
-        TestSubject invalid = new TestSubject();
-        invalid.retryDelayMillis = -1;
-        invalid.setUp();
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void nonPositiveRetrySchedulerThreadCountIsRejected() {
-        TestSubject invalid = new TestSubject();
-        invalid.retrySchedulerThreadCount = 0;
-        invalid.setUp();
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -276,12 +260,10 @@ public class FailureTolerantLongByteArrayMapTest {
     }
 
     @Test
-    public void retryingOperationKeepsItsOutstandingPermit() throws Exception {
+    public void droppedOperationReleasesOutstandingPermit() throws Exception {
         byte[] value = {42};
-        test.retryDelayMillis = 500;
         when(map.getAsync(0L))
                 .thenReturn(CompletableFuture.failedFuture(new OperationTimeoutException("expected")))
-                .thenReturn(CompletableFuture.completedFuture(value))
                 .thenReturn(CompletableFuture.completedFuture(value));
 
         CompletableFuture<byte[]> retrying = test.get(state);
@@ -294,12 +276,10 @@ public class FailureTolerantLongByteArrayMapTest {
             });
 
             assertTrue(secondStarted.await(1, TimeUnit.SECONDS));
-            assertStillBlocked(second);
-            verify(map, times(1)).getAsync(0L);
-
-            assertArrayEquals(value, retrying.get(2, TimeUnit.SECONDS));
+            try { retrying.get(2, TimeUnit.SECONDS); fail("expected dropped operation"); }
+            catch (ExecutionException expected) { assertTrue(expected.getCause() instanceof OperationTimeoutException); }
             assertArrayEquals(value, second.get(2, TimeUnit.SECONDS));
-            verify(map, times(3)).getAsync(0L);
+            verify(map, times(2)).getAsync(0L);
             test.verifyFailureRecovery();
         } finally {
             executor.shutdownNow();

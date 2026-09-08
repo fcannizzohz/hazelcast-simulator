@@ -426,4 +426,12 @@ public @interface TimeStep {
      * @return the executionGroup.
      */
     String executionGroup() default "";
+
+    /**
+     * For asynchronous timesteps, count an operation only when its
+     * {@code CompletableFuture} completes successfully. The default keeps the
+     * historical behavior, where the timestep invocation is counted when it
+     * returns.
+     */
+    boolean countSuccessfulCompletions() default false;
 }

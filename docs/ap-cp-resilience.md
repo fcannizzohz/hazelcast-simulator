@@ -52,30 +52,25 @@ test:
     putProb: 0.1
 
     maxOutstandingOperations: 256
-    retryDelayMillis: 100
-    retrySchedulerThreadCount: 2
     verifyMapSize: true
     requireSuccessAfterFailure: true
 ```
 
-### Retry configuration
+### Failure-tolerance configuration
 
 | Property | Default | Valid values | Behavior and guidance |
 | --- | ---: | --- | --- |
-| `maxOutstandingOperations` | `256` | `1` or greater | Maximum number of admitted logical operations per workload instance (normally one worker JVM), shared by all timestep threads, maps, and target clients. At capacity, an issuing timestep thread blocks until an operation completes or the test stops; no additional Hazelcast invocation is submitted. An admitted operation keeps its permit while active and between retries, which bounds both in-flight invocations and scheduled retry backlog. Use a lower value with large values or a small client heap. This limit does not include the workload's pre-generated value pool, so configure `valueCount` and value sizes within the heap budget as well. |
-| `retryDelayMillis` | `100` | `0` or greater | Delay between a retryable failure and the next attempt of that same logical operation. Use a nonzero value in failure tests to avoid creating a tight retry loop while the cluster is unavailable. Zero is primarily useful for unit tests. This delay does not block a Simulator timestep thread. |
-| `retrySchedulerThreadCount` | `2` | `1` or greater | Number of daemon threads which initiate retries after their delay. These threads do not run synchronous map calls. Increase the value only when a large number of outstanding operations causes measurable retry-submission lag after recovery. A logical operation still has no more than one active attempt. |
+| `maxOutstandingOperations` | `256` | `1` or greater | Maximum number of unresolved one-shot asynchronous invocations per worker JVM. Issuers wait at this bound, preventing an unavailable client from retaining an unbounded invocation backlog. Permits are released on success, expected drop, unexpected failure, or shutdown cancellation. |
 
-Negative retry delays, a non-positive outstanding-operation limit, and
-non-positive scheduler thread counts fail during test setup. The workload
-retries only recognized transient failures; changing these properties does not
-make unexpected exceptions retryable.
+Expected split-brain, offline-client, target-disconnected, and operation-timeout
+failures are dropped immediately and counted; they are not queued for
+application-level retry. Unexpected exceptions remain fatal.
 
-Backpressure is intentionally applied to the whole logical operation rather
-than each individual attempt. Simulator therefore measures admission waiting as
-part of operation latency and reports throughput at the sustainable completion
-rate. The final workload summary reports issued, completed, retried,
-backpressured, peak-outstanding, and currently outstanding operation counts.
+Backpressure is applied only while a single invocation is unresolved. The
+failure-tolerant timesteps use completion-based accounting, so Simulator
+throughput and latency represent successful map operations. The final summary
+reports issued, completed, dropped by failure type, backpressured,
+peak-outstanding, and currently outstanding counts.
 
 For example, `valueCount: 1000` with one-megabyte values retains roughly 1 GB of
 generated values in every worker JVM before accounting for Hazelcast client
