@@ -16,6 +16,7 @@
 package com.hazelcast.simulator.tests.map;
 
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.map.IMap;
 import com.hazelcast.simulator.common.TestCase;
 import com.hazelcast.simulator.hazelcast4plus.HazelcastInstances;
@@ -31,13 +32,25 @@ import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doNothing;
@@ -67,6 +80,8 @@ public class FailureTolerantLongByteArrayMapTest {
         test.valueCount = 1;
         test.minValueLength = 1;
         test.maxValueLength = 1;
+        test.maxOutstandingOperations = 1;
+        test.retryDelayMillis = 0;
         test.setTargetInstance(instance);
         test.setUp();
         state = test.new ThreadState();
@@ -115,12 +130,265 @@ public class FailureTolerantLongByteArrayMapTest {
     }
 
     @Test
-    public void overridesEveryMapTimeStep() throws NoSuchMethodException {
-        for (Method method : FailureTolerantLongByteArrayMap.class.getDeclaredMethods()) {
+    public void retriesWrappedExpectedFailure() {
+        byte[] value = {42};
+        when(map.getAsync(0L))
+                .thenReturn(CompletableFuture.failedFuture(
+                        new CompletionException(new OperationTimeoutException("expected"))))
+                .thenReturn(CompletableFuture.completedFuture(value));
+
+        assertArrayEquals(value, test.get(state).join());
+        awaitInvocations(() -> verify(map, times(2)).getAsync(0L));
+        test.verifyFailureRecovery();
+    }
+
+    @Test
+    public void outstandingOperationsDrainWhenRunStops() {
+        byte[] value = {42};
+        CompletableFuture<byte[]> neverCompletes = new CompletableFuture<>();
+        when(map.getAsync(0L))
+                .thenReturn(CompletableFuture.completedFuture(value))
+                .thenReturn(neverCompletes);
+
+        test.get(state).join();
+        CompletableFuture<byte[]> outstanding = test.get(state);
+        test.drainOutstandingOperations();
+
+        org.junit.Assert.assertTrue(outstanding.isCompletedExceptionally());
+        test.verifyFailureRecovery();
+    }
+
+    @Test
+    public void operationWithoutNativeAsyncApiFailsExplicitly() {
+        try {
+            test.getAll(state).join();
+        } catch (CompletionException failure) {
+            assertEquals(UnsupportedOperationException.class, failure.getCause().getClass());
+            return;
+        }
+        throw new AssertionError("getAll should be disabled");
+    }
+
+    @Test
+    public void simulatorBindsFailureToleranceProperties() {
+        TestCase testCase = new TestCase("id")
+                .setProperty("maxOutstandingOperations", 17)
+                .setProperty("retryDelayMillis", 250)
+                .setProperty("retrySchedulerThreadCount", 4)
+                .setProperty("verifyMapSize", false)
+                .setProperty("requireSuccessAfterFailure", false);
+        TestSubject configured = new TestSubject();
+        HazelcastInstances driver = new HazelcastInstances(List.of(mock(HazelcastInstance.class)));
+
+        new PropertyBinding(testCase).setDriverInstance(driver).bind(configured);
+
+        assertEquals(17, configured.maxOutstandingOperations);
+        assertEquals(250, configured.retryDelayMillis);
+        assertEquals(4, configured.retrySchedulerThreadCount);
+        assertEquals(false, configured.verifyMapSize);
+        assertEquals(false, configured.requireSuccessAfterFailure);
+    }
+
+    @Test
+    public void mapSizeVerificationCanBeDisabled() {
+        when(map.getAsync(0L)).thenReturn(CompletableFuture.completedFuture(new byte[]{42}));
+        when(map.size()).thenReturn(0);
+        test.verifyMapSize = false;
+
+        test.get(state).join();
+
+        test.verifyFailureRecovery();
+    }
+
+    @Test
+    public void successAfterFailureRequirementCanBeDisabled() {
+        when(map.getAsync(0L))
+                .thenReturn(CompletableFuture.completedFuture(new byte[]{42}))
+                .thenReturn(CompletableFuture.failedFuture(new OperationTimeoutException("expected")));
+        test.retryDelayMillis = 10_000;
+
+        test.get(state).join();
+        CompletableFuture<byte[]> retrying = test.get(state);
+        awaitInvocations(() -> verify(map, times(2)).getAsync(0L));
+        test.requireSuccessAfterFailure = false;
+        test.drainOutstandingOperations();
+
+        org.junit.Assert.assertTrue(retrying.isCompletedExceptionally());
+        test.verifyFailureRecovery();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void negativeRetryDelayIsRejected() {
+        TestSubject invalid = new TestSubject();
+        invalid.retryDelayMillis = -1;
+        invalid.setUp();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void nonPositiveRetrySchedulerThreadCountIsRejected() {
+        TestSubject invalid = new TestSubject();
+        invalid.retrySchedulerThreadCount = 0;
+        invalid.setUp();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void nonPositiveOutstandingOperationLimitIsRejected() {
+        TestSubject invalid = new TestSubject();
+        invalid.maxOutstandingOperations = 0;
+        invalid.setUp();
+    }
+
+    @Test
+    public void outstandingOperationLimitDefaultsTo256() {
+        assertEquals(256, new TestSubject().maxOutstandingOperations);
+    }
+
+    @Test
+    public void blocksIssuerUntilOutstandingOperationCompletes() throws Exception {
+        byte[] value = {42};
+        CompletableFuture<byte[]> firstAttempt = new CompletableFuture<>();
+        when(map.getAsync(0L))
+                .thenReturn(firstAttempt)
+                .thenReturn(CompletableFuture.completedFuture(value));
+
+        CompletableFuture<byte[]> first = test.get(state);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        CountDownLatch secondStarted = new CountDownLatch(1);
+        try {
+            Future<byte[]> second = executor.submit(() -> {
+                secondStarted.countDown();
+                return test.get(state).join();
+            });
+
+            assertTrue(secondStarted.await(1, TimeUnit.SECONDS));
+            assertStillBlocked(second);
+            verify(map, times(1)).getAsync(0L);
+
+            firstAttempt.complete(value);
+            assertArrayEquals(value, first.join());
+            assertArrayEquals(value, second.get(2, TimeUnit.SECONDS));
+            verify(map, times(2)).getAsync(0L);
+            test.verifyFailureRecovery();
+        } finally {
+            firstAttempt.complete(value);
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void retryingOperationKeepsItsOutstandingPermit() throws Exception {
+        byte[] value = {42};
+        test.retryDelayMillis = 500;
+        when(map.getAsync(0L))
+                .thenReturn(CompletableFuture.failedFuture(new OperationTimeoutException("expected")))
+                .thenReturn(CompletableFuture.completedFuture(value))
+                .thenReturn(CompletableFuture.completedFuture(value));
+
+        CompletableFuture<byte[]> retrying = test.get(state);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        CountDownLatch secondStarted = new CountDownLatch(1);
+        try {
+            Future<byte[]> second = executor.submit(() -> {
+                secondStarted.countDown();
+                return test.get(state).join();
+            });
+
+            assertTrue(secondStarted.await(1, TimeUnit.SECONDS));
+            assertStillBlocked(second);
+            verify(map, times(1)).getAsync(0L);
+
+            assertArrayEquals(value, retrying.get(2, TimeUnit.SECONDS));
+            assertArrayEquals(value, second.get(2, TimeUnit.SECONDS));
+            verify(map, times(3)).getAsync(0L);
+            test.verifyFailureRecovery();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void stoppingTestWakesBlockedIssuerWithoutSubmittingIt() throws Exception {
+        CompletableFuture<byte[]> firstAttempt = new CompletableFuture<>();
+        when(map.getAsync(0L)).thenReturn(firstAttempt);
+
+        CompletableFuture<byte[]> first = test.get(state);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        CountDownLatch secondStarted = new CountDownLatch(1);
+        try {
+            Future<byte[]> second = executor.submit(() -> {
+                secondStarted.countDown();
+                return test.get(state).join();
+            });
+            assertTrue(secondStarted.await(1, TimeUnit.SECONDS));
+            assertStillBlocked(second);
+
+            test.drainOutstandingOperations();
+
+            assertTrue(first.isCompletedExceptionally());
+            try {
+                second.get(2, TimeUnit.SECONDS);
+                fail("blocked operation should be cancelled when the test stops");
+            } catch (ExecutionException expected) {
+                assertTrue(expected.getCause() instanceof java.util.concurrent.CancellationException);
+            }
+            verify(map, times(1)).getAsync(0L);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void unexpectedFailureReleasesOutstandingPermit() {
+        byte[] value = {42};
+        when(map.getAsync(0L))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("unexpected")))
+                .thenReturn(CompletableFuture.completedFuture(value));
+
+        try {
+            test.get(state).join();
+            fail("first operation should fail");
+        } catch (CompletionException expected) {
+            assertTrue(expected.getCause() instanceof IllegalStateException);
+        }
+
+        assertArrayEquals(value, test.get(state).join());
+        verify(map, times(2)).getAsync(0L);
+    }
+
+    @Test
+    public void verificationFailureReleasesOutstandingPermit() {
+        byte[] value = {42};
+        when(map.getAsync(0L))
+                .thenReturn(CompletableFuture.completedFuture(null))
+                .thenReturn(CompletableFuture.completedFuture(value));
+
+        try {
+            test.get(state).join();
+            fail("first operation should fail verification");
+        } catch (CompletionException expected) {
+            assertTrue(expected.getCause() instanceof AssertionError);
+        }
+
+        assertArrayEquals(value, test.get(state).join());
+        verify(map, times(2)).getAsync(0L);
+    }
+
+    @Test
+    public void exposesEveryBaselineOperationProperty() {
+        Set<String> baselineOperations = new HashSet<>();
+        for (Method method : LongByteArrayMapTest.class.getDeclaredMethods()) {
             if (method.isAnnotationPresent(TimeStep.class)) {
-                FailureTolerantLongByteArrayMap.class.getDeclaredMethod(method.getName(), method.getParameterTypes());
+                baselineOperations.add(method.getName());
             }
         }
+        Set<String> failureTolerantOperations = new HashSet<>();
+        for (Method method : FailureTolerantLongByteArrayMap.class.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(TimeStep.class)) {
+                failureTolerantOperations.add(method.getName());
+            }
+        }
+
+        assertEquals(baselineOperations, failureTolerantOperations);
     }
 
     @Test
@@ -129,7 +397,7 @@ public class FailureTolerantLongByteArrayMapTest {
         TimeStepModel model = new TimeStepModel(FailureTolerantLongByteArrayMap.class,
                 new PropertyBinding(testCase));
 
-        assertEquals(FailureTolerantLongByteArrayMap.class,
+        assertEquals(AbstractLongByteArrayMapTest.class,
                 model.getThreadStateConstructor("").getParameterTypes()[0]);
         model.getThreadStateConstructor("").newInstance(test);
     }
@@ -171,6 +439,16 @@ public class FailureTolerantLongByteArrayMapTest {
             }
         }
         throw last;
+    }
+
+    private static void assertStillBlocked(Future<?> future) throws Exception {
+        assertFalse(future.isDone());
+        try {
+            future.get(200, TimeUnit.MILLISECONDS);
+            fail("operation should still be waiting for outstanding-operation capacity");
+        } catch (TimeoutException expected) {
+            // Expected: the only capacity permit is still held by the first logical operation.
+        }
     }
 
     private static final class TestSubject extends FailureTolerantLongByteArrayMap {

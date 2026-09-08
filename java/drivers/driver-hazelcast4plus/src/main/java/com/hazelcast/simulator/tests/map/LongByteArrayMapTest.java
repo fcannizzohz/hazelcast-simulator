@@ -16,107 +16,21 @@
 
 package com.hazelcast.simulator.tests.map;
 
-import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.Pipelining;
-import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.IMap;
-import com.hazelcast.simulator.hz.HazelcastTest;
 import com.hazelcast.simulator.probes.LatencyProbe;
-import com.hazelcast.simulator.test.BaseThreadState;
-import com.hazelcast.simulator.test.annotations.Prepare;
-import com.hazelcast.simulator.test.annotations.Setup;
 import com.hazelcast.simulator.test.annotations.StartNanos;
-import com.hazelcast.simulator.test.annotations.Teardown;
 import com.hazelcast.simulator.test.annotations.TimeStep;
-import com.hazelcast.simulator.worker.loadsupport.Streamer;
-import com.hazelcast.simulator.worker.loadsupport.StreamerFactory;
 
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
-import static com.hazelcast.simulator.tests.helpers.HazelcastTestUtils.assignKeyToIndex;
-import static com.hazelcast.simulator.utils.GeneratorUtils.generateByteArrays;
-import static java.lang.Thread.currentThread;
+public class LongByteArrayMapTest extends AbstractLongByteArrayMapTest {
 
-public class LongByteArrayMapTest extends HazelcastTest {
-
-    // properties
-    public int keyDomain = 10000;
-    public int valueCount = 10000;
-    public int minValueLength = 10;
-    public int maxValueLength = 10;
-    public int pipelineDepth = 10;
-    public int pipelineIterations = 100;
-    public int getAllSize = 5;
-    public int mapCount = 1;
-    /**
-     * The fixed keys to be used in the test. If set to 0, all
-     * keys are random. Currently the only {@code get} operation uses it.
-     * It should be less than the {@code keyDomain}.
-     */
-    public int fixedKeyDomain = 0;
-    /**
-     * The probability of using a fixed key from the {@code fixedKeyDomain}.
-     * It is used if {@code fixedKeyPercentage} is set to a value greater than 0.
-     */
-    public int fixedKeyProbability = 0;
-
-    private byte[][] values;
-    private final List<List<IMap<Long, byte[]>>> maps = new ArrayList<>();
     private final Executor callerRuns = Runnable::run;
-    private final Random random = new Random();
-
-    // Tracks which thread is assigned which client by its index
-    private final Map<Thread, Integer> clientIndexForThread = new ConcurrentHashMap<>();
-
-    @Setup
-    public void setUp() {
-        for (HazelcastInstance instance : getTargetInstances()) {
-            List<IMap<Long, byte[]>> mapsForInstance = new ArrayList<>();
-            maps.add(mapsForInstance);
-            for (int i = 0; i < mapCount; i++) {
-                String mapName = (mapCount == 1) ? name : name + "_" + i;
-                mapsForInstance.add(instance.getMap(mapName));
-            }
-        }
-        values = generateByteArrays(valueCount, minValueLength, maxValueLength);
-    }
-
-    @Prepare(global = true)
-    public void prepare() {
-        // We only need to use one instance to prepare the maps
-        for (IMap<Long, byte[]> map : maps.get(0)) {
-            Streamer<Long, byte[]> streamer = StreamerFactory.getInstance(map);
-            for (long key = 0; key < keyDomain; key++) {
-                byte[] value = values[random.nextInt(valueCount)];
-                streamer.pushEntry(key, value);
-            }
-            streamer.await();
-        }
-    }
-
-    protected IMap<Long, byte[]> getRandomMap() {
-        List<IMap<Long, byte[]>> mapsToSelectFrom;
-        if (maps.size() == 1) {
-            mapsToSelectFrom = maps.get(0);
-        } else {
-            Integer clientIndex = clientIndexForThread.get(currentThread());
-            mapsToSelectFrom = maps.get(clientIndex == null ? putClientForCurrentThread() : clientIndex);
-        }
-        return mapsToSelectFrom.get(random.nextInt(mapCount));
-    }
-
-    private synchronized int putClientForCurrentThread() {
-        return assignKeyToIndex(getTargetInstances().size(), currentThread(), clientIndexForThread);
-    }
 
     @TimeStep(prob = -1)
     public byte[] get(ThreadState state) {
@@ -200,47 +114,4 @@ public class LongByteArrayMapTest extends HazelcastTest {
         }
     }
 
-    public class ThreadState extends BaseThreadState {
-        public static final int HIGHEST_PROBABILITY = 100;
-        protected Pipelining<byte[]> pipeline;
-        protected int i;
-
-        protected long fixedKeyOrRandom() {
-            if (fixedKeyDomain > 0 && fixedKeyDomain < keyDomain && fixedKeyProbability > 0 &&
-                    randomInt(HIGHEST_PROBABILITY) < fixedKeyProbability) {
-                return randomLong(fixedKeyDomain);
-            }
-            return randomKey();
-        }
-
-        protected long randomKey() {
-            return randomLong(keyDomain);
-        }
-
-        protected byte[] randomValue() {
-            return values[randomInt(values.length)];
-        }
-    }
-
-    protected static final class UpdateEntryProcessor implements EntryProcessor<Long, byte[], Object> {
-
-        private final byte increment;
-
-        protected UpdateEntryProcessor(byte increment) {
-            this.increment = increment;
-        }
-
-        @Override
-        public Object process(Map.Entry<Long, byte[]> entry) {
-            byte[] value = entry.getValue();
-            value[0] += increment;
-            entry.setValue(value);
-            return null;
-        }
-    }
-
-    @Teardown
-    public void tearDown() {
-        maps.stream().flatMap(Collection::stream).forEach(IMap::destroy);
-    }
 }
